@@ -96,7 +96,13 @@ class CaptureTool:
             self._on_cancel()
 
     def _save_region(self, x1, y1, x2, y2):
-        cropped = self._screenshot.crop((x1, y1, x2, y2))
+        try:
+            cropped = self._screenshot.crop((x1, y1, x2, y2))
+        except Exception as e:
+            messagebox.showerror("Capture Error", f"ครอปรูปไม่สำเร็จ: {e}", parent=self._root)
+            if self._on_cancel:
+                self._on_cancel()
+            return
 
         name = simpledialog.askstring(
             "ตั้งชื่อรูป",
@@ -110,7 +116,13 @@ class CaptureTool:
 
         filename = f"{name}.png"
         path = os.path.join(self._save_dir, filename)
-        cropped.save(path)
+        try:
+            cropped.save(path)
+        except Exception as e:
+            messagebox.showerror("Save Error", f"บันทึกรูปไม่สำเร็จ: {e}", parent=self._root)
+            if self._on_cancel:
+                self._on_cancel()
+            return
 
         if self._on_done:
             self._on_done(path)

@@ -21,5 +21,6 @@ env/
 Thumbs.db
 
 # Logs / screenshots
+logs/
 *.log
 screenshots/

@@ -3,14 +3,10 @@ import time
 from typing import Callable
 
 from engine.image_matcher import find_on_screen
+from engine.logger import get_logger
 
 
 class ScreenMonitor:
-    """
-    Thread แยกที่วน loop จับภาพหน้าจอและตรวจสอบว่าอยู่ใน state ไหน
-    เมื่อเจอ state ใหม่จะเรียก on_state_detected callback
-    """
-
     def __init__(
         self,
         states: list[dict],
@@ -33,29 +29,35 @@ class ScreenMonitor:
         self._running = False
 
     def _run(self):
-        while self._running:
-            detected = self._detect_state()
-            if detected and detected != self._current_state:
-                self._current_state = detected
-                self._on_state_detected(detected)
-            time.sleep(self._interval)
+        get_logger().info("Screen monitor started")
+        try:
+            while self._running:
+                try:
+                    detected = self._detect_state()
+                    if detected and detected != self._current_state:
+                        self._current_state = detected
+                        get_logger().info(f"State detected: {detected}")
+                        self._on_state_detected(detected)
+                except Exception as e:
+                    get_logger().error(f"Screen monitor error: {e}")
+                time.sleep(self._interval)
+        except Exception as e:
+            get_logger().error(f"Screen monitor thread crashed: {e}")
+        finally:
+            get_logger().info("Screen monitor stopped")
 
     def _detect_state(self) -> str | None:
         for state in self._states:
             trigger = state.get("trigger", {})
             if trigger.get("type") != "image":
                 continue
-
             template_path = trigger.get("file", "")
             confidence = trigger.get("confidence", 0.85)
-
             try:
-                result = find_on_screen(template_path, confidence)
-                if result:
+                if find_on_screen(template_path, confidence):
                     return state["name"]
             except FileNotFoundError:
-                pass
-
+                get_logger().warning(f"Trigger image not found: {template_path}")
         return None
 
     @property
