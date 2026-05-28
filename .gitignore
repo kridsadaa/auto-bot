@@ -1,0 +1,25 @@
+# Config (ข้อมูล credentials - ห้ามขึ้น git)
+config/
+
+# Images ที่ capture ไว้ (เฉพาะเครื่อง)
+triggers/
+elements/
+
+# Data files
+data/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs / screenshots
+*.log
+screenshots/
