@@ -1,14 +1,22 @@
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
+from PIL import Image, ImageTk
 import yaml
 import os
 
 CONFIG_PATH = "config/bot_config.yaml"
 
-ACTION_TYPES = ["click_image", "type", "key", "hotkey", "wait", "screenshot", "scroll", "drag"]
+ACTION_TYPES = [
+    "click_image", "type", "key", "hotkey", "wait", "screenshot", "scroll", "drag",
+    "wait_image", "wait_text", "repeat_key_until", "stop_if_image", "if_image",
+]
 
 KEY_OPTIONS = ["enter", "tab", "escape", "f1", "f2", "f3", "f4", "f5", "f6",
                "f7", "f8", "f12", "delete", "backspace", "up", "down", "left", "right"]
+
+UNTIL_OPTIONS = ["image_appears", "image_disappears", "text_filled", "text_empty"]
+WAIT_MODE_OPTIONS = ["appear", "disappear"]
+TEXT_MODE_OPTIONS = ["filled", "empty"]
 
 
 def _load_config() -> dict:
@@ -24,7 +32,10 @@ def _save_config(config: dict):
 def _step_label(step: dict) -> str:
     action = step.get("action", "?")
     if action == "click_image":
-        return f"click_image   →   {os.path.basename(step.get('target', ''))}"
+        label = f"click_image   →   {os.path.basename(step.get('target', ''))}"
+        if step.get("offset_x") is not None and step.get("offset_y") is not None:
+            label += f"  @({step['offset_x']},{step['offset_y']})"
+        return label
     if action == "type":
         return f"type          →   {step.get('text', '')}"
     if action == "key":
@@ -39,7 +50,171 @@ def _step_label(step: dict) -> str:
         return f"scroll        →   {step.get('clicks', 3)} clicks"
     if action == "drag":
         return f"drag          →   ({step.get('src_x')},{step.get('src_y')}) → ({step.get('dst_x')},{step.get('dst_y')})"
+    if action == "wait_image":
+        return f"wait_image     →   {os.path.basename(step.get('target', ''))}  [{step.get('mode', 'appear')}]"
+    if action == "wait_text":
+        return f"wait_text      →   region {step.get('region', '?')}  [{step.get('mode', 'filled')}]"
+    if action == "repeat_key_until":
+        return f"repeat '{step.get('key', 'enter')}'  until  {step.get('until', '?')}"
+    if action == "stop_if_image":
+        return f"stop_if_image  →   {os.path.basename(step.get('target', ''))}"
+    if action == "if_image":
+        return (f"if_image       →   {os.path.basename(step.get('target', ''))}  "
+                f"(then {len(step.get('then', []))} / else {len(step.get('else', []))})")
     return action
+
+
+# ─── Position Picker ─────────────────────────────────────────────────────────
+
+class PositionPicker(tk.Toplevel):
+    """
+    เปิดรูป element ให้ user คลิกเลือก 'จุดที่จะกด' (offset จากมุมซ้ายบนของรูป)
+    แสดงจุดสีแดงตรงตำแหน่งที่เลือก
+    """
+
+    MAX_W, MAX_H = 720, 520
+
+    def __init__(self, parent, image_path: str, init_offset: tuple = None):
+        super().__init__(parent)
+        self.title("เลือกจุดกดในรูป")
+        self.resizable(False, False)
+        self.grab_set()
+        self._committed = False
+        self._offset = init_offset  # (x, y) เป็น pixel ของรูปต้นฉบับ หรือ None = กลางรูป
+        self._dot = None
+
+        img = Image.open(image_path)
+        self._ow, self._oh = img.size
+        self._scale = min(self.MAX_W / self._ow, self.MAX_H / self._oh, 1.0)
+        dw, dh = int(self._ow * self._scale), int(self._oh * self._scale)
+        disp = img.resize((dw, dh)) if self._scale != 1.0 else img
+        self._photo = ImageTk.PhotoImage(disp)
+
+        self._build(dw, dh)
+        start = init_offset if init_offset is not None else (self._ow // 2, self._oh // 2)
+        self._set_dot(start[0], start[1], save=False)
+        self._center()
+
+    def _build(self, dw, dh):
+        tk.Label(
+            self, text="คลิกบนรูปเพื่อเลือกจุดที่จะกด  •  จุดสีแดง = ตำแหน่งที่จะคลิก",
+            fg="#333",
+        ).pack(padx=10, pady=(10, 4))
+
+        self._canvas = tk.Canvas(
+            self, width=dw, height=dh, cursor="cross",
+            highlightthickness=1, highlightbackground="#888",
+        )
+        self._canvas.pack(padx=10)
+        self._canvas.create_image(0, 0, anchor="nw", image=self._photo)
+        self._canvas.bind("<Button-1>", self._on_click)
+
+        self._coord_var = tk.StringVar()
+        tk.Label(self, textvariable=self._coord_var, fg="#0e639c",
+                 font=("Consolas", 9)).pack(pady=4)
+
+        btn = tk.Frame(self)
+        btn.pack(pady=8)
+        tk.Button(btn, text="บันทึกจุดนี้", width=12, bg="#4ec9b0",
+                  command=self._save).pack(side="left", padx=5)
+        tk.Button(btn, text="ใช้กลางรูป", width=12,
+                  command=self._use_center).pack(side="left", padx=5)
+        tk.Button(btn, text="ยกเลิก", width=10, command=self.destroy).pack(side="left", padx=5)
+
+    def _on_click(self, event):
+        ox = max(0, min(int(event.x / self._scale), self._ow - 1))
+        oy = max(0, min(int(event.y / self._scale), self._oh - 1))
+        self._set_dot(ox, oy, save=True)
+
+    def _set_dot(self, ox: int, oy: int, save: bool):
+        dx, dy = ox * self._scale, oy * self._scale
+        if self._dot:
+            self._canvas.delete(self._dot)
+        r = 5
+        self._dot = self._canvas.create_oval(
+            dx - r, dy - r, dx + r, dy + r,
+            fill="#ff3030", outline="white", width=2,
+        )
+        self._coord_var.set(f"จุดกด (offset): ({ox}, {oy})   จากขนาดรูป {self._ow}x{self._oh}")
+        if save:
+            self._offset = (ox, oy)
+
+    def _save(self):
+        self._committed = True
+        self.destroy()
+
+    def _use_center(self):
+        self._committed = True
+        self._offset = None
+        self.destroy()
+
+    def _center(self):
+        self.update_idletasks()
+        w, h = self.winfo_width(), self.winfo_height()
+        sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
+        self.geometry(f"+{(sw-w)//2}+{(sh-h)//2}")
+
+    def get_result(self) -> tuple[bool, tuple | None]:
+        """คืน (committed, offset) — committed=False ถ้ายกเลิก"""
+        return (self._committed, self._offset)
+
+
+# ─── Region Picker ───────────────────────────────────────────────────────────
+
+class RegionPicker(tk.Toplevel):
+    """ลากกรอบบนหน้าจอเพื่อเลือก region (x, y, w, h) — ใช้กับ OCR"""
+
+    def __init__(self, parent, on_done=None, on_cancel=None):
+        super().__init__(parent)
+        self._on_done = on_done
+        self._on_cancel = on_cancel
+        self.attributes("-fullscreen", True)
+        self.attributes("-alpha", 0.3)
+        self.attributes("-topmost", True)
+        self.configure(bg="black")
+
+        self._canvas = tk.Canvas(self, cursor="cross", bg="black", highlightthickness=0)
+        self._canvas.pack(fill="both", expand=True)
+        sw = self.winfo_screenwidth()
+        self._canvas.create_text(
+            sw // 2, 30,
+            text="ลากกรอบเลือกพื้นที่อ่านข้อความ (OCR)  |  ESC = ยกเลิก",
+            fill="white", font=("Segoe UI", 13, "bold"),
+        )
+
+        self._sx = self._sy = 0
+        self._rect = None
+        self._canvas.bind("<ButtonPress-1>", self._press)
+        self._canvas.bind("<B1-Motion>", self._drag)
+        self._canvas.bind("<ButtonRelease-1>", self._release)
+        self.bind("<Escape>", lambda e: self._cancel())
+        self._canvas.focus_set()
+
+    def _press(self, e):
+        self._sx, self._sy = e.x, e.y
+        if self._rect:
+            self._canvas.delete(self._rect)
+        self._rect = self._canvas.create_rectangle(
+            e.x, e.y, e.x, e.y, outline="#00ff00", width=2,
+        )
+
+    def _drag(self, e):
+        self._canvas.coords(self._rect, self._sx, self._sy, e.x, e.y)
+
+    def _release(self, e):
+        x1, y1 = min(self._sx, e.x), min(self._sy, e.y)
+        x2, y2 = max(self._sx, e.x), max(self._sy, e.y)
+        self.destroy()
+        if x2 - x1 >= 3 and y2 - y1 >= 3:
+            if self._on_done:
+                self._on_done((x1, y1, x2 - x1, y2 - y1))
+        elif self._on_cancel:
+            self._on_cancel()
+
+    def _cancel(self):
+        self.destroy()
+        if self._on_cancel:
+            self._on_cancel()
 
 
 # ─── Step Dialog ────────────────────────────────────────────────────────────
@@ -55,6 +230,9 @@ class StepDialog(tk.Toplevel):
         self._result: dict = None
         self._step = step or {}
         self._fields: dict[str, tk.Variable] = {}
+        self._offset_label = None
+        ox, oy = self._step.get("offset_x"), self._step.get("offset_y")
+        self._offset = (ox, oy) if ox is not None and oy is not None else None
         self._action_var = tk.StringVar(value=self._step.get("action", "click_image"))
         self._build()
         self._center()
@@ -94,6 +272,7 @@ class StepDialog(tk.Toplevel):
             self._add_field("target", "Image file:", browse=True)
             self._add_field("timeout", "Timeout (s):", default=str(self._step.get("timeout", 10)))
             self._add_field("confidence", "Confidence:", default=str(self._step.get("confidence", 0.85)))
+            self._add_position_row()
 
         elif action == "type":
             self._add_field("text", "Text / Variable:", default=self._step.get("text", ""))
@@ -123,6 +302,43 @@ class StepDialog(tk.Toplevel):
             self._add_field("dst_x", "ถึง X:", default=str(self._step.get("dst_x", 0)))
             self._add_field("dst_y", "ถึง Y:", default=str(self._step.get("dst_y", 0)))
 
+        elif action == "wait_image":
+            self._add_field("target", "Image file:", browse=True)
+            self._add_dropdown("mode", "รอจน:", WAIT_MODE_OPTIONS,
+                               default=self._step.get("mode", "appear"))
+            tk.Label(self._fields_frame, text="  appear = รอจนรูปโผล่ / disappear = รอจนรูปหาย",
+                     fg="gray", font=("Segoe UI", 8)).pack(anchor="w")
+            self._add_field("timeout", "Timeout (s):", default=str(self._step.get("timeout", 15)))
+            self._add_field("confidence", "Confidence:", default=str(self._step.get("confidence", 0.85)))
+
+        elif action == "wait_text":
+            self._add_region_field("region", "Region (OCR):")
+            self._add_dropdown("mode", "รอจนช่อง:", TEXT_MODE_OPTIONS,
+                               default=self._step.get("mode", "filled"))
+            tk.Label(self._fields_frame, text="  filled = รอจนมีข้อความ / empty = รอจนว่าง",
+                     fg="gray", font=("Segoe UI", 8)).pack(anchor="w")
+            self._add_field("timeout", "Timeout (s):", default=str(self._step.get("timeout", 15)))
+            self._add_field("min_chars", "ขั้นต่ำ (ตัวอักษร):", default=str(self._step.get("min_chars", 1)))
+
+        elif action == "repeat_key_until":
+            self._add_dropdown("key", "กดปุ่ม:", KEY_OPTIONS, default=self._step.get("key", "enter"))
+            self._add_dropdown("until", "ซ้ำจนกว่า:", UNTIL_OPTIONS,
+                               default=self._step.get("until", "image_appears"))
+            self._add_field("target", "Image (image_*):", browse=True)
+            self._add_region_field("region", "Region (text_*):")
+            self._add_field("confidence", "Confidence:", default=str(self._step.get("confidence", 0.85)))
+            self._add_field("max_attempts", "กดสูงสุด (ครั้ง):", default=str(self._step.get("max_attempts", 20)))
+            self._add_field("delay", "หน่วงต่อครั้ง (s):", default=str(self._step.get("delay", 0.5)))
+
+        elif action == "stop_if_image":
+            self._add_field("target", "Image file:", browse=True)
+            self._add_field("confidence", "Confidence:", default=str(self._step.get("confidence", 0.85)))
+            self._add_field("message", "ข้อความเตือน:", default=self._step.get("message", ""))
+
+        elif action == "if_image":
+            self._add_field("target", "Image file:", browse=True)
+            self._add_field("confidence", "Confidence:", default=str(self._step.get("confidence", 0.85)))
+
     def _add_field(self, key: str, label: str, default: str = "", browse: bool = False):
         row = tk.Frame(self._fields_frame)
         row.pack(fill="x", pady=2)
@@ -149,6 +365,68 @@ class StepDialog(tk.Toplevel):
         var = tk.StringVar(value=self._step.get(key, default))
         ttk.Combobox(row, textvariable=var, values=options, width=20).pack(side="left", padx=4)
         self._fields[key] = var
+
+    def _add_region_field(self, key: str, label: str):
+        row = tk.Frame(self._fields_frame)
+        row.pack(fill="x", pady=2)
+        tk.Label(row, text=label, width=18, anchor="w").pack(side="left")
+        existing = self._step.get(key)
+        default = ",".join(str(n) for n in existing) if existing else ""
+        var = tk.StringVar(value=default)
+        tk.Entry(row, textvariable=var, width=20).pack(side="left", padx=4)
+        tk.Button(row, text="เลือก Region", bg="#569cd6", fg="white",
+                  command=lambda: self._pick_region(var)).pack(side="left", padx=2)
+        tk.Label(self._fields_frame, text="  รูปแบบ: x,y,w,h (เว้นว่างถ้าไม่ใช้)",
+                 fg="gray", font=("Segoe UI", 8)).pack(anchor="w")
+        self._fields[key] = var
+
+    def _pick_region(self, var: tk.StringVar):
+        self.withdraw()
+
+        def on_done(region):
+            var.set(",".join(str(n) for n in region))
+            self.deiconify()
+            self.lift()
+            self.focus_force()
+
+        def on_cancel():
+            self.deiconify()
+            self.lift()
+
+        self.after(200, lambda: RegionPicker(self, on_done=on_done, on_cancel=on_cancel))
+
+    def _add_position_row(self):
+        row = tk.Frame(self._fields_frame)
+        row.pack(fill="x", pady=4)
+        tk.Label(row, text="จุดที่จะกด:", width=18, anchor="w").pack(side="left")
+        tk.Button(row, text="🎯 เลือกจุดกด", bg="#dcdcaa",
+                  command=self._pick_position).pack(side="left", padx=4)
+        self._offset_label = tk.Label(row, text="", fg="#0e639c")
+        self._offset_label.pack(side="left", padx=6)
+        self._update_offset_label()
+
+    def _update_offset_label(self):
+        if self._offset_label is None:
+            return
+        if self._offset is None:
+            self._offset_label.configure(text="กลางรูป (default)")
+        else:
+            self._offset_label.configure(text=f"({self._offset[0]}, {self._offset[1]})")
+
+    def _pick_position(self):
+        target = self._fields.get("target")
+        path = target.get().strip() if target else ""
+        if not path or not os.path.exists(path):
+            messagebox.showwarning(
+                "", "ต้องเลือก/แคป Image file ก่อน ถึงจะเลือกจุดกดได้", parent=self,
+            )
+            return
+        picker = PositionPicker(self, path, init_offset=self._offset)
+        self.wait_window(picker)
+        committed, offset = picker.get_result()
+        if committed:
+            self._offset = offset
+            self._update_offset_label()
 
     def _browse(self, var: tk.StringVar):
         path = filedialog.askopenfilename(
@@ -183,13 +461,18 @@ class StepDialog(tk.Toplevel):
 
     def _save(self):
         action = self._action_var.get()
-        step = {"action": action}
+        if self._step.get("action") == action:
+            step = dict(self._step)
+        else:
+            step = {"action": action}
 
         for key, var in self._fields.items():
             val = var.get().strip()
             if not val:
+                step.pop(key, None)
                 continue
-            if key in ("timeout", "seconds", "x", "y", "clicks", "src_x", "src_y", "dst_x", "dst_y"):
+            if key in ("timeout", "seconds", "x", "y", "clicks", "src_x", "src_y",
+                       "dst_x", "dst_y", "max_attempts", "min_chars", "delay"):
                 try:
                     step[key] = float(val) if "." in val else int(val)
                 except ValueError:
@@ -199,10 +482,25 @@ class StepDialog(tk.Toplevel):
                     step[key] = float(val)
                 except ValueError:
                     step[key] = 0.85
+            elif key == "region":
+                parts = [p.strip() for p in val.split(",") if p.strip()]
+                try:
+                    nums = [int(float(p)) for p in parts]
+                    step[key] = nums if len(nums) == 4 else val
+                except ValueError:
+                    step[key] = val
             elif key == "keys":
                 step[key] = [k.strip() for k in val.split("+")]
             else:
                 step[key] = val
+
+        if action == "click_image" and self._offset is not None:
+            step["offset_x"] = int(self._offset[0])
+            step["offset_y"] = int(self._offset[1])
+
+        if action == "if_image":
+            step.setdefault("then", [])
+            step.setdefault("else", [])
 
         self._result = step
         self.destroy()

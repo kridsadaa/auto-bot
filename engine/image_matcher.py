@@ -11,14 +11,29 @@ class ImageNotFoundError(Exception):
         super().__init__(f"Image not found on screen: {template_path}")
 
 
+def _click_point(max_loc, template, offset: tuple = None) -> tuple[int, int]:
+    """
+    คำนวณจุดที่จะคลิกจากตำแหน่งมุมซ้ายบนของ match (max_loc)
+    - ถ้า offset = (ox, oy) → คลิกที่ (มุมซ้ายบน + offset) ตาม pixel ของ template
+    - ถ้าไม่มี offset → คลิกกลางรูป
+    """
+    h, w = template.shape[:2]
+    if offset is not None:
+        ox = max(0, min(int(offset[0]), w - 1))
+        oy = max(0, min(int(offset[1]), h - 1))
+        return (max_loc[0] + ox, max_loc[1] + oy)
+    return (max_loc[0] + w // 2, max_loc[1] + h // 2)
+
+
 def find_on_screen(
     template_path: str,
     confidence: float = 0.85,
     region: tuple = None,
+    offset: tuple = None,
 ) -> tuple[int, int] | None:
     """
     ค้นหา template image บนหน้าจอ
-    คืนค่า (x, y) จุดกึ่งกลางของที่เจอ หรือ None ถ้าไม่เจอ
+    คืนค่า (x, y) จุดที่จะคลิก (กลางรูป หรือ offset ที่กำหนด) หรือ None ถ้าไม่เจอ
     """
     screenshot = pyautogui.screenshot(region=region)
     screen_np = cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR)
@@ -31,9 +46,7 @@ def find_on_screen(
     _, max_val, _, max_loc = cv2.minMaxLoc(result)
 
     if max_val >= confidence:
-        h, w = template.shape[:2]
-        cx = max_loc[0] + w // 2
-        cy = max_loc[1] + h // 2
+        cx, cy = _click_point(max_loc, template, offset)
         if region:
             cx += region[0]
             cy += region[1]
@@ -46,6 +59,7 @@ def find_on_screen_or_raise(
     template_path: str,
     confidence: float = 0.85,
     region: tuple = None,
+    offset: tuple = None,
 ) -> tuple[int, int]:
     """
     เหมือน find_on_screen แต่ raise ImageNotFoundError ถ้าไม่เจอ
@@ -66,9 +80,7 @@ def find_on_screen_or_raise(
     _, max_val, _, max_loc = cv2.minMaxLoc(result)
 
     if max_val >= confidence:
-        h, w = template.shape[:2]
-        cx = max_loc[0] + w // 2
-        cy = max_loc[1] + h // 2
+        cx, cy = _click_point(max_loc, template, offset)
         if region:
             cx += region[0]
             cy += region[1]

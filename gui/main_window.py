@@ -94,6 +94,32 @@ class MainWindow(tk.Tk):
         tk.Label(ctrl1, text="ESC = Pause  |  Mouse มุมซ้ายบน = Stop ทันที",
                  bg="#2d2d2d", fg="#6e6e6e", font=("Segoe UI", 8)).pack(side="left", padx=14)
 
+        # --- แถว Run Loop โดยตรง (ไม่ต้องมี state/trigger) ---
+        run_loop_bar = tk.Frame(self, bg="#2d2d2d", pady=5)
+        run_loop_bar.pack(fill="x", padx=10)
+
+        tk.Label(run_loop_bar, text="Run Loop:", bg="#2d2d2d", fg="#9cdcfe",
+                 font=("Segoe UI", 9)).pack(side="left", padx=(4, 8))
+
+        self._loop_choice = tk.StringVar()
+        self._loop_combo = ttk.Combobox(
+            run_loop_bar, textvariable=self._loop_choice,
+            state="readonly", width=28,
+        )
+        self._loop_combo.pack(side="left", padx=4)
+
+        self._btn_run_loop = tk.Button(
+            run_loop_bar, text="▶  Run Loop นี้", width=14,
+            bg="#dcdcaa", fg="black", font=("Segoe UI", 9, "bold"),
+            command=self._run_selected_loop,
+        )
+        self._btn_run_loop.pack(side="left", padx=6)
+
+        tk.Label(run_loop_bar, text="(run ทันที ไม่ต้องรอ trigger image)",
+                 bg="#2d2d2d", fg="#6e6e6e", font=("Segoe UI", 8)).pack(side="left", padx=8)
+
+        self._refresh_loop_choices()
+
         # --- แถว 2: Tools ---
         ctrl2 = tk.Frame(self, bg="#252526", pady=5)
         ctrl2.pack(fill="x", padx=10)
@@ -149,6 +175,14 @@ class MainWindow(tk.Tk):
         self._log = LogPanel(log_frame, bg="#1e1e1e")
         self._log.pack(fill="both", expand=True)
 
+    def _refresh_loop_choices(self):
+        loops = list(self._config.get("loops", {}).keys())
+        self._loop_combo["values"] = loops
+        if loops and self._loop_choice.get() not in loops:
+            self._loop_choice.set(loops[0])
+        elif not loops:
+            self._loop_choice.set("")
+
     def _refresh_state_list(self):
         self._state_list.delete(0, "end")
         for state in self._config.get("states", []):
@@ -167,20 +201,72 @@ class MainWindow(tk.Tk):
     def _queue_log(self, msg: str, level: str = "info"):
         self._log_queue.put((msg, level))
 
-    def _on_start(self):
-        self._config = self._load_config()
-        self._refresh_state_list()
-
-        # ถามค่า runtime variables ที่ยังว่างอยู่
+    def _prompt_runtime_vars(self) -> dict | None:
+        """ถามค่า runtime variables ที่ยังว่างอยู่ คืน None ถ้าผู้ใช้ยกเลิก"""
         runtime_vars = {}
         for k, v in self._config.get("variables", {}).items():
             if not v:
-                val = simpledialog.askstring(f"Runtime Input", f"กรุณาใส่ค่า: {k}", parent=self)
+                val = simpledialog.askstring("Runtime Input", f"กรุณาใส่ค่า: {k}", parent=self)
                 if val is None:
-                    return
+                    return None
                 runtime_vars[k] = val
             else:
                 runtime_vars[k] = v
+        return runtime_vars
+
+    def _run_selected_loop(self):
+        self._config = self._load_config()
+        self._refresh_state_list()
+        self._refresh_loop_choices()
+
+        loop_name = self._loop_choice.get()
+        loops = self._config.get("loops", {})
+        if not loop_name or loop_name not in loops:
+            messagebox.showwarning("", "เลือก loop ที่จะ run ก่อน")
+            return
+
+        runtime_vars = self._prompt_runtime_vars()
+        if runtime_vars is None:
+            return
+
+        self._interrupt.start()
+        self._set_running_state(True)
+        self._log.clear()
+        self._queue_log(f"เริ่ม run loop: {loop_name}", "ok")
+        self._status.set(f"กำลัง run loop: {loop_name}")
+
+        data_source = DataSource(runtime_vars)
+        loop_cfg = loops[loop_name]
+        runner = LoopRunner(
+            interrupt=self._interrupt,
+            on_image_not_found=lambda e: self._handle_image_error(e),
+            on_log=lambda msg: self._queue_log(msg),
+        )
+
+        def run():
+            try:
+                runner.run_loop(loop_cfg, data_source)
+                self._queue_log(f"Loop {loop_name} เสร็จสิ้น", "ok")
+            except BotStoppedError:
+                self._queue_log("Bot หยุดโดยผู้ใช้", "warn")
+            except Exception as ex:
+                self._queue_log(f"Error: {ex}", "error")
+            finally:
+                self.after(0, lambda: self._set_running_state(False))
+                self.after(0, lambda: self._status.set("เสร็จสิ้น"))
+
+        self._bot_thread = threading.Thread(target=run, daemon=True)
+        self._bot_thread.start()
+
+    def _on_start(self):
+        self._config = self._load_config()
+        self._refresh_state_list()
+        self._refresh_loop_choices()
+
+        # ถามค่า runtime variables ที่ยังว่างอยู่
+        runtime_vars = self._prompt_runtime_vars()
+        if runtime_vars is None:
+            return
 
         self._interrupt.start()
         self._set_running_state(True)
@@ -306,6 +392,7 @@ class MainWindow(tk.Tk):
 
     def _set_running_state(self, running: bool):
         self._btn_start.configure(state="disabled" if running else "normal")
+        self._btn_run_loop.configure(state="disabled" if running else "normal")
         self._btn_pause.configure(state="normal" if running else "disabled")
         self._btn_stop.configure(state="normal" if running else "disabled")
 
@@ -329,6 +416,7 @@ class MainWindow(tk.Tk):
     def _reload_config(self):
         self._config = self._load_config()
         self._refresh_state_list()
+        self._refresh_loop_choices()
 
     def _on_capture_element(self):
         tool = CaptureTool(self, save_dir="elements", on_done=self._on_captured_element)

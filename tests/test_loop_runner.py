@@ -90,3 +90,135 @@ def test_unknown_action_does_not_crash(mock_interrupt):
     runner = make_runner(mock_interrupt)
     ds = DataSource({})
     runner.run_loop({"steps": [{"action": "nonexistent_action"}]}, ds)
+
+
+# ─── error guards ────────────────────────────────────────────────────────────
+
+def test_error_guard_stops_before_step(mock_interrupt):
+    runner = make_runner(mock_interrupt)
+    ds = DataSource({})
+    with patch("engine.loop_runner.find_on_screen", return_value=(5, 5)), \
+         patch("engine.actions.press_key") as mock_key:
+        with pytest.raises(BotStoppedError):
+            runner.run_loop({
+                "error_guards": [{"target": "err.png", "message": "boom"}],
+                "steps": [{"action": "key", "key": "enter"}],
+            }, ds)
+        mock_key.assert_not_called()
+
+
+def test_no_error_guard_when_image_absent(mock_interrupt):
+    runner = make_runner(mock_interrupt)
+    ds = DataSource({})
+    with patch("engine.loop_runner.find_on_screen", return_value=None), \
+         patch("engine.actions.press_key") as mock_key:
+        runner.run_loop({
+            "error_guards": [{"target": "err.png"}],
+            "steps": [{"action": "key", "key": "enter"}],
+        }, ds)
+        mock_key.assert_called_once_with("enter")
+
+
+# ─── repeat_key_until ────────────────────────────────────────────────────────
+
+def test_repeat_key_until_presses_until_image_appears(mock_interrupt):
+    runner = make_runner(mock_interrupt)
+    ds = DataSource({})
+    # not found, not found, found → กด 2 ครั้ง
+    with patch("engine.loop_runner.find_on_screen", side_effect=[None, None, (1, 1)]), \
+         patch("engine.actions.press_key") as mock_key, \
+         patch("engine.actions.wait"):
+        runner.run_loop({"steps": [{
+            "action": "repeat_key_until", "key": "enter",
+            "until": "image_appears", "target": "end.png",
+            "max_attempts": 5, "delay": 0,
+        }]}, ds)
+    assert mock_key.call_count == 2
+
+
+def test_repeat_key_until_gives_up_after_max(mock_interrupt):
+    runner = make_runner(mock_interrupt)
+    ds = DataSource({})
+    with patch("engine.loop_runner.find_on_screen", return_value=None), \
+         patch("engine.actions.press_key"), patch("engine.actions.wait"):
+        with pytest.raises(BotStoppedError):
+            runner.run_loop({"steps": [{
+                "action": "repeat_key_until", "until": "image_appears",
+                "target": "x.png", "max_attempts": 3, "delay": 0,
+            }]}, ds)
+
+
+def test_repeat_key_until_text_filled_uses_ocr(mock_interrupt):
+    runner = make_runner(mock_interrupt)
+    ds = DataSource({})
+    with patch("engine.loop_runner.ocr.region_has_text", side_effect=[False, True]), \
+         patch("engine.actions.press_key") as mock_key, patch("engine.actions.wait"):
+        runner.run_loop({"steps": [{
+            "action": "repeat_key_until", "key": "enter",
+            "until": "text_filled", "region": [0, 0, 10, 10],
+            "max_attempts": 5, "delay": 0,
+        }]}, ds)
+    assert mock_key.call_count == 1
+
+
+# ─── if_image branching ──────────────────────────────────────────────────────
+
+def test_if_image_runs_then_branch_when_found(mock_interrupt):
+    runner = make_runner(mock_interrupt)
+    ds = DataSource({})
+    with patch("engine.loop_runner.find_on_screen", return_value=(1, 1)), \
+         patch("engine.actions.press_key") as mock_key:
+        runner.run_loop({"steps": [{
+            "action": "if_image", "target": "popup.png",
+            "then": [{"action": "key", "key": "esc"}],
+            "else": [{"action": "key", "key": "enter"}],
+        }]}, ds)
+    mock_key.assert_called_once_with("esc")
+
+
+def test_if_image_runs_else_branch_when_absent(mock_interrupt):
+    runner = make_runner(mock_interrupt)
+    ds = DataSource({})
+    with patch("engine.loop_runner.find_on_screen", return_value=None), \
+         patch("engine.actions.press_key") as mock_key:
+        runner.run_loop({"steps": [{
+            "action": "if_image", "target": "popup.png",
+            "then": [{"action": "key", "key": "esc"}],
+            "else": [{"action": "key", "key": "enter"}],
+        }]}, ds)
+    mock_key.assert_called_once_with("enter")
+
+
+# ─── stop_if_image ───────────────────────────────────────────────────────────
+
+def test_stop_if_image_raises_when_found(mock_interrupt):
+    runner = make_runner(mock_interrupt)
+    ds = DataSource({})
+    with patch("engine.loop_runner.find_on_screen", return_value=(1, 1)):
+        with pytest.raises(BotStoppedError):
+            runner.run_loop({"steps": [{"action": "stop_if_image", "target": "err.png"}]}, ds)
+
+
+def test_stop_if_image_continues_when_absent(mock_interrupt):
+    runner = make_runner(mock_interrupt)
+    ds = DataSource({})
+    with patch("engine.loop_runner.find_on_screen", return_value=None), \
+         patch("engine.actions.press_key") as mock_key:
+        runner.run_loop({"steps": [
+            {"action": "stop_if_image", "target": "err.png"},
+            {"action": "key", "key": "enter"},
+        ]}, ds)
+    mock_key.assert_called_once_with("enter")
+
+
+# ─── wait_text ───────────────────────────────────────────────────────────────
+
+def test_wait_text_waits_until_filled(mock_interrupt):
+    runner = make_runner(mock_interrupt)
+    ds = DataSource({})
+    with patch("engine.loop_runner.ocr.region_has_text", side_effect=[False, True]), \
+         patch("engine.loop_runner.time.sleep"):
+        runner.run_loop({"steps": [{
+            "action": "wait_text", "region": [0, 0, 10, 10],
+            "mode": "filled", "timeout": 5,
+        }]}, ds)

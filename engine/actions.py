@@ -4,7 +4,7 @@ import keyboard
 from PIL import Image
 from typing import Callable
 
-from engine.image_matcher import find_on_screen_or_raise, ImageNotFoundError
+from engine.image_matcher import find_on_screen, find_on_screen_or_raise, ImageNotFoundError
 from engine.logger import get_logger
 
 pyautogui.FAILSAFE = True
@@ -57,14 +57,20 @@ def click(x: int, y: int):
 
 
 @_safe
-def click_image(template_path: str, timeout: float = 10, confidence: float = 0.85) -> tuple[int, int]:
-    _log(f"Looking for: {template_path}")
+def click_image(
+    template_path: str,
+    timeout: float = 10,
+    confidence: float = 0.85,
+    offset: tuple = None,
+) -> tuple[int, int]:
+    where = f" @offset{tuple(offset)}" if offset else ""
+    _log(f"Looking for: {template_path}{where}")
     deadline = time.time() + timeout
     last_screenshot = None
 
     while time.time() < deadline:
         try:
-            x, y = find_on_screen_or_raise(template_path, confidence)
+            x, y = find_on_screen_or_raise(template_path, confidence, offset=offset)
             _log(f"Found & click ({x}, {y}): {template_path}")
             pyautogui.click(x, y)
             time.sleep(CLICK_SETTLE_DELAY)
@@ -76,10 +82,56 @@ def click_image(template_path: str, timeout: float = 10, confidence: float = 0.8
     raise ImageNotFoundError(template_path, last_screenshot or pyautogui.screenshot())
 
 
+def _paste_via_clipboard(text: str) -> bool:
+    """พิมพ์ผ่าน clipboard (ctrl+v) — เร็ว/ชัวร์กว่าสำหรับ SAP & desktop apps
+    คืน False ถ้า pyperclip ใช้ไม่ได้ เพื่อ fallback ไป keyboard.write"""
+    try:
+        import pyperclip
+    except Exception:
+        return False
+    try:
+        pyperclip.copy(text)
+        time.sleep(0.05)
+        pyautogui.hotkey("ctrl", "v")
+        time.sleep(0.05)
+        return True
+    except Exception:
+        return False
+
+
 @_safe
 def type_text(text: str, interval: float = 0.05):
     _log(f"Type: {repr(text)}")
+    # SAP/desktop รับ keystroke ทีละตัวไม่ทัน → ใช้ clipboard paste ก่อน
+    if _paste_via_clipboard(text):
+        return
     keyboard.write(text, delay=interval)
+
+
+@_safe
+def wait_image(
+    target: str,
+    timeout: float = 15,
+    confidence: float = 0.85,
+    mode: str = "appear",
+) -> bool:
+    """
+    รอจนรูป 'โผล่' (mode=appear) หรือ 'หายไป' (mode=disappear) ภายใน timeout
+    - appear: raise ImageNotFoundError ถ้าหมดเวลายังไม่เจอ (เพื่อเข้า error dialog เดิม)
+    - disappear: raise ActionError ถ้าหมดเวลายังไม่หาย
+    """
+    _log(f"Wait image [{mode}]: {target} (timeout {timeout}s)")
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        found = find_on_screen(target, confidence) is not None
+        if (mode == "appear" and found) or (mode == "disappear" and not found):
+            _log(f"เงื่อนไข '{mode}' เป็นจริง: {target}")
+            return True
+        time.sleep(0.4)
+
+    if mode == "appear":
+        raise ImageNotFoundError(target, pyautogui.screenshot())
+    raise ActionError(f"รูปยังไม่หายไปใน {timeout}s: {target}")
 
 
 @_safe
