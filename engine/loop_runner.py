@@ -11,6 +11,18 @@ from engine.interrupt_handler import InterruptHandler, BotStoppedError
 from engine.logger import get_logger
 
 
+class RowError(Exception):
+    """แถว CSV ทำงานพลาด (action error/ภาพไม่เจอ) — กู้คืนได้ถ้า on_row_error=skip
+    ต่างจาก BotStoppedError ที่ตั้งใจหยุดทั้งงาน (ผู้ใช้/stop_if_image/error_guard)"""
+    pass
+
+
+class SkipRowSignal(Exception):
+    """สัญญาณ 'ข้ามแถวนี้ ไปแถว CSV ถัดไป' (จาก skip_row / skip_row_if_image)
+    ไม่ใช่ error — เป็น control flow ปกติ"""
+    pass
+
+
 class LoopRunner:
     def __init__(
         self,
@@ -29,6 +41,8 @@ class LoopRunner:
         csv_path = loop_config.get("data_source")
         # รูป error ที่ถ้าเจอระหว่างทำงาน ให้หยุดทันที (เช็กก่อนทุก step)
         self._error_guards = loop_config.get("error_guards", []) or []
+        # นโยบายเมื่อ "แถว" ทำงานพลาด: "stop" (default) = หยุดทั้งงาน, "skip" = ข้ามไปแถวถัดไป
+        on_row_error = str(loop_config.get("on_row_error", "stop")).lower()
 
         if csv_path:
             ds = DataSource(data_source._static, csv_path)
@@ -37,9 +51,27 @@ class LoopRunner:
                 row_num += 1
                 ds.next_row()
                 get_logger().info(f"--- CSV row {row_num} ---")
-                self._execute_steps(steps, ds)
+                try:
+                    self._execute_steps(steps, ds)
+                except SkipRowSignal as e:
+                    # ตั้งใจข้ามแถวนี้ — ไปแถวถัดไปเสมอ ไม่ว่า on_row_error เป็นอะไร
+                    self._on_log(f"⏭️ ข้ามแถว {row_num}: {e}")
+                    get_logger().info(f"Row {row_num} skipped: {e}")
+                    continue
+                except (RowError, ImageNotFoundError) as e:
+                    if on_row_error == "skip":
+                        self._on_log(f"⚠️ แถว {row_num} ผิดพลาด — ข้ามไปแถวถัดไป: {e}")
+                        get_logger().error(f"Row {row_num} failed (skipped): {e}")
+                        continue
+                    raise  # on_row_error=stop → หยุดทั้งงาน
+                # BotStoppedError (ผู้ใช้/stop_if_image/error_guard) ไม่ถูกจับ → หยุดทั้งงานเสมอ
         else:
-            self._execute_steps(steps, data_source)
+            try:
+                self._execute_steps(steps, data_source)
+            except SkipRowSignal as e:
+                # ไม่มี CSV ให้ข้ามไป — จบ loop อย่างสุภาพ
+                self._on_log(f"skip_row ถูกเรียกแต่ไม่มี CSV — จบ loop: {e}")
+                get_logger().info(f"skip_row with no CSV — ending loop: {e}")
 
     def _execute_steps(self, steps: list, data_source: DataSource):
         for i, step in enumerate(steps, 1):
@@ -111,11 +143,37 @@ class LoopRunner:
         )
         self._execute_steps(branch, data_source)
 
+    def _do_switch_image(self, step: dict, data_source: DataSource):
+        """แตกหลายทาง: ไล่เช็ก cases ตามลำดับ เจอรูปแรกที่ตรง → รัน steps ของ case นั้น
+        ถ้าไม่เข้า case ไหนเลย → รัน default"""
+        default_conf = step.get("confidence", 0.85)
+        for i, case in enumerate(step.get("cases", []), 1):
+            if find_on_screen(case["target"], case.get("confidence", default_conf)) is not None:
+                self._on_log(
+                    f"switch_image: case {i} ({case['target']}) → {len(case.get('steps', []))} steps"
+                )
+                self._execute_steps(case.get("steps", []), data_source)
+                return
+        default_steps = step.get("default", [])
+        self._on_log(f"switch_image: ไม่เข้า case ใด → default ({len(default_steps)} steps)")
+        self._execute_steps(default_steps, data_source)
+
     def _do_stop_if_image(self, step: dict):
         if find_on_screen(step["target"], step.get("confidence", 0.85)) is not None:
             msg = step.get("message") or f"เจอรูปที่สั่งให้หยุด: {step['target']}"
             self._on_log(f"⛔ {msg}")
             raise BotStoppedError(msg)
+
+    def _do_skip_row(self, step: dict):
+        """ข้ามแถว CSV ปัจจุบันทันที ไปทำแถวถัดไป"""
+        msg = step.get("message") or "skip_row"
+        raise SkipRowSignal(msg)
+
+    def _do_skip_row_if_image(self, step: dict):
+        """ถ้าเจอรูปที่กำหนด → ข้ามแถว CSV ปัจจุบัน ไปแถวถัดไป (ไม่หยุดทั้งงาน)"""
+        if find_on_screen(step["target"], step.get("confidence", 0.85)) is not None:
+            msg = step.get("message") or f"เจอ {step['target']}"
+            raise SkipRowSignal(msg)
 
     def _execute_step(self, step: dict, data_source: DataSource):
         action = step.get("action")
@@ -164,8 +222,14 @@ class LoopRunner:
                 self._do_repeat_key_until(step)
             elif action == "if_image":
                 self._do_if_image(step, data_source)
+            elif action == "switch_image":
+                self._do_switch_image(step, data_source)
             elif action == "stop_if_image":
                 self._do_stop_if_image(step)
+            elif action == "skip_row":
+                self._do_skip_row(step)
+            elif action == "skip_row_if_image":
+                self._do_skip_row_if_image(step)
             else:
                 get_logger().warning(f"Unknown action: {action}")
                 self._on_log(f"Unknown action: {action}")
@@ -182,15 +246,15 @@ class LoopRunner:
             else:
                 raise
 
+        except (BotStoppedError, SkipRowSignal, RowError):
+            raise  # control-flow / pass-through — อย่าแปลงเป็น error ชนิดอื่น
+
         except ActionError as e:
             get_logger().error(f"Action error: {e}\n{traceback.format_exc()}")
             self._on_log(f"Error: {e}")
-            raise BotStoppedError(str(e))
-
-        except BotStoppedError:
-            raise
+            raise RowError(str(e))
 
         except Exception as e:
             get_logger().error(f"Unexpected error in step '{action}': {e}\n{traceback.format_exc()}")
             self._on_log(f"Unexpected error: {e}")
-            raise BotStoppedError(str(e))
+            raise RowError(str(e))

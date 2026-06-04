@@ -28,4 +28,3 @@ screenshots/
 # PyInstaller / Build
 build/
 dist/
-*.spec

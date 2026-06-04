@@ -323,6 +323,7 @@ class MainWindow(tk.Tk):
             self._on_stop()
         except Exception as ex:
             self._queue_log(f"Error: {ex}", "error")
+            self._on_stop()
 
     def _start_copilot_mode(self, data_source: DataSource):
         self._status.set("Copilot Mode — รอ state ถัดไป...")

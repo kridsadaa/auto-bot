@@ -5,7 +5,7 @@ Visual automation bot สำหรับทำงานซ้ำๆ บน SAP, 
 ## Features
 
 - **Image Trigger** — bot จับภาพหน้าจอแล้วเทียบกับรูปที่กำหนดไว้ เมื่อเจอหน้าที่ตรงกันจะเริ่ม loop ที่ผูกไว้โดยอัตโนมัติ
-- **Sequence Editor** — สร้างและแก้ไข loop ผ่าน GUI ไม่ต้องแก้ไฟล์ config เอง
+- **Sequence Editor** — สร้างและแก้ไข loop ผ่าน GUI ไม่ต้องแก้ไฟล์ config เอง รวมถึง branch ซ้อน (`if_image` then/else, `switch_image` หลาย case), ตัวแปร (Variables) และ States/Triggers
 - **Capture Tool** — ลาก box บนหน้าจอเพื่อ capture trigger / element image ได้เลยไม่ต้องใช้โปรแกรมอื่น
 - **Data Source** — รองรับค่า static, วันที่อัตโนมัติ และ loop ข้อมูลจาก CSV ทีละแถว
 - **Error Dialog** — เมื่อหา image ไม่เจอ bot หยุดและแสดงรูปเปรียบเทียบให้ capture ใหม่ได้ทันที
@@ -68,16 +68,14 @@ auto-bot/
 │   ├── data_source.py       # static / CSV / {TODAY} resolver
 │   ├── loop_runner.py       # execute YAML sequences
 │   ├── screen_monitor.py    # background state detection
+│   ├── ocr.py               # Tesseract OCR (wait_text / repeat_key_until)
 │   └── interrupt_handler.py # ESC pause / failsafe stop
-├── gui/
-│   ├── main_window.py       # control panel
-│   ├── sequence_editor.py   # visual loop builder
-│   ├── capture_tool.py      # screen region selector
-│   ├── error_dialog.py      # image not found dialog
-│   └── log_panel.py         # real-time activity log
-└── integrations/
-    ├── sap_client.py        # SAP GUI Scripting
-    └── web_client.py        # Playwright
+└── gui/
+    ├── main_window.py       # control panel
+    ├── sequence_editor.py   # visual loop builder
+    ├── capture_tool.py      # screen region selector
+    ├── error_dialog.py      # image not found dialog
+    └── log_panel.py         # real-time activity log
 ```
 
 ## Config Format
@@ -168,13 +166,25 @@ loops:
     *   `target` / `region`: ภาพหรือพื้นที่สำหรับใช้ตรวจสอบเงื่อนไข
     *   `max_attempts` (default `20`): จำกัดจำนวนการกดสูงสุด เพื่อป้องกันลูปค้าง
     *   `delay` (default `0.5`): หน่วงเวลาการกดแต่ละรอบ (วินาที)
-*   **`if_image`** — การแบ่งสาขาทำงาน (Branching) เช็กภาพบนจอเพื่อเลือกทางไปต่อ
+*   **`if_image`** — การแบ่งสาขาทำงาน (Branching) เช็กภาพบนจอเพื่อเลือกทางไปต่อ (2 ทาง)
     *   `target`: ภาพที่ใช้เช็คเงื่อนไข
     *   `then`: ลิสต์ของ Action ย่อยที่จะทำถ้า **เจอ** รูปนี้
     *   `else`: ลิสต์ของ Action ย่อยที่จะทำถ้า **ไม่เจอ** รูปนี้
+    *   แก้ then/else ได้ใน Sequence Editor โดยตรง (ไม่ต้องแก้ YAML)
+*   **`switch_image`** — การแบ่งสาขาแบบ **หลายทาง (3+ ทาง)** ไล่เช็ก case จากบนลงล่าง เจอรูปแรกที่ตรงรัน case นั้นแล้วจบ
+    *   `cases`: ลิสต์ของ case ตามลำดับความสำคัญ แต่ละ case = `{target, confidence?, steps:[...]}`
+    *   `default`: ลิสต์ Action ที่ทำเมื่อ **ไม่เข้า case ใดเลย** (ไม่ใส่ก็ได้ = ไม่ทำอะไร)
+    *   `confidence`: ค่า default ที่ใช้ถ้า case ไม่ได้ระบุ confidence เอง
+    *   ทำงานร่วมกับ `skip_row` / `stop_if_image` ในสาขาได้ (เช่น case "ไม่มีงาน" → `skip_row`)
 *   **`stop_if_image`** — สั่งหยุดบอททันทีหากตรวจพบภาพเป้าหมายบนจอ
     *   `target`: ภาพหน้าต่างแจ้งเตือนหรือภาพ Error
     *   `message`: ข้อความแจ้งเตือนผู้ใช้งานเมื่อบอทหยุด
+*   **`skip_row_if_image`** — ถ้าเจอภาพเป้าหมาย → **ข้ามแถว CSV ปัจจุบัน** ไปทำแถวถัดไป (ไม่หยุดทั้งงาน) เหมาะกับเคส "รายการนี้ไม่มีงาน ข้ามไปตัวถัดไป"
+    *   `target`: ภาพที่บอกว่าควรข้ามแถวนี้ (เช่น หน้าต่าง "ไม่พบข้อมูล")
+    *   `confidence`, `message`: ความแม่นยำ และหมายเหตุที่จะ log
+    *   ใช้ได้เฉพาะ loop ที่มี `data_source` (CSV) — ถ้าไม่มี CSV จะจบ loop เฉยๆ
+*   **`skip_row`** — ข้ามแถว CSV ปัจจุบันทันทีแบบไม่มีเงื่อนไข (step ที่เหลือในแถวจะไม่ถูกทำ) มักวางไว้ในสาขา `then`/`else` ของ `if_image`
+    *   `message`: หมายเหตุที่จะ log
 
 #### 3. Error Guards (ระบบเฝ้าระวัง Error ตลอดเวลา)
 คุณสามารถใส่ `error_guards` ไว้ที่หัวข้อระดับสูงสุดของ Loop เพื่อสั่งตรวจจับหน้าต่างแจ้งเตือนหรือหน้าจอ Error ตลอดเวลาก่อนทำทุก Step
@@ -184,6 +194,19 @@ loops:
     error_guards:
       - target: "elements/sap_error_popup.png"
         message: "เกิดข้อผิดพลาดในการเปิดออเดอร์ใน SAP บอทถูกหยุดการทำงานแล้ว"
+    steps:
+      - ...
+```
+
+#### 4. on_row_error (นโยบายเมื่อแถว CSV ทำงานพลาด)
+ตั้งค่าระดับ Loop ว่าถ้า step ใดในแถวหนึ่ง error (เช่น หาภาพไม่เจอ) จะให้ทำอย่างไร:
+*   `stop` (default): หยุดทั้งงานทันที
+*   `skip`: log ไว้แล้ว **ข้ามไปทำแถว CSV ถัดไป** — ทำให้ batch ไม่ล้มทั้งหมดเพราะแถวเดียวพัง
+```yaml
+loops:
+  loop_name:
+    data_source: "data/tasks.csv"
+    on_row_error: skip          # แถวไหนพัง ข้ามไปทำต่อ ไม่ล้มทั้ง batch
     steps:
       - ...
 ```

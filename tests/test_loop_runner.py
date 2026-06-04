@@ -4,7 +4,7 @@ from unittest.mock import patch, MagicMock, call
 from engine.data_source import DataSource
 from engine.image_matcher import ImageNotFoundError
 from engine.interrupt_handler import BotStoppedError
-from engine.loop_runner import LoopRunner
+from engine.loop_runner import LoopRunner, RowError
 from PIL import Image
 import numpy as np
 
@@ -141,7 +141,7 @@ def test_repeat_key_until_gives_up_after_max(mock_interrupt):
     ds = DataSource({})
     with patch("engine.loop_runner.find_on_screen", return_value=None), \
          patch("engine.actions.press_key"), patch("engine.actions.wait"):
-        with pytest.raises(BotStoppedError):
+        with pytest.raises(RowError):
             runner.run_loop({"steps": [{
                 "action": "repeat_key_until", "until": "image_appears",
                 "target": "x.png", "max_attempts": 3, "delay": 0,
@@ -211,6 +211,53 @@ def test_stop_if_image_continues_when_absent(mock_interrupt):
     mock_key.assert_called_once_with("enter")
 
 
+# ─── switch_image (multi-way branch) ─────────────────────────────────────────
+
+def test_switch_image_runs_first_matching_case(mock_interrupt):
+    runner = make_runner(mock_interrupt)
+    ds = DataSource({})
+    # case1 ไม่เจอ, case2 เจอ → รันเฉพาะ case2
+    with patch("engine.loop_runner.find_on_screen", side_effect=[None, (1, 1)]), \
+         patch("engine.actions.press_key") as mock_key:
+        runner.run_loop({"steps": [{
+            "action": "switch_image",
+            "cases": [
+                {"target": "a.png", "steps": [{"action": "key", "key": "f1"}]},
+                {"target": "b.png", "steps": [{"action": "key", "key": "f2"}]},
+            ],
+            "default": [{"action": "key", "key": "esc"}],
+        }]}, ds)
+    mock_key.assert_called_once_with("f2")
+
+
+def test_switch_image_runs_default_when_no_case_matches(mock_interrupt):
+    runner = make_runner(mock_interrupt)
+    ds = DataSource({})
+    with patch("engine.loop_runner.find_on_screen", return_value=None), \
+         patch("engine.actions.press_key") as mock_key:
+        runner.run_loop({"steps": [{
+            "action": "switch_image",
+            "cases": [
+                {"target": "a.png", "steps": [{"action": "key", "key": "f1"}]},
+                {"target": "b.png", "steps": [{"action": "key", "key": "f2"}]},
+            ],
+            "default": [{"action": "key", "key": "esc"}],
+        }]}, ds)
+    mock_key.assert_called_once_with("esc")
+
+
+def test_switch_image_no_default_no_match_does_nothing(mock_interrupt):
+    runner = make_runner(mock_interrupt)
+    ds = DataSource({})
+    with patch("engine.loop_runner.find_on_screen", return_value=None), \
+         patch("engine.actions.press_key") as mock_key:
+        runner.run_loop({"steps": [{
+            "action": "switch_image",
+            "cases": [{"target": "a.png", "steps": [{"action": "key", "key": "f1"}]}],
+        }]}, ds)
+    mock_key.assert_not_called()
+
+
 # ─── wait_text ───────────────────────────────────────────────────────────────
 
 def test_wait_text_waits_until_filled(mock_interrupt):
@@ -222,3 +269,93 @@ def test_wait_text_waits_until_filled(mock_interrupt):
             "action": "wait_text", "region": [0, 0, 10, 10],
             "mode": "filled", "timeout": 5,
         }]}, ds)
+
+
+# ─── skip_row / skip_row_if_image ────────────────────────────────────────────
+
+def test_skip_row_if_image_skips_only_matching_row(mock_interrupt, tmp_csv):
+    runner = make_runner(mock_interrupt)
+    ds = DataSource({})
+    calls = []
+    # find_on_screen ถูกเรียก 1 ครั้ง/แถว (จาก skip_row_if_image) — เจอเฉพาะแถว 2
+    with patch("engine.loop_runner.find_on_screen", side_effect=[None, (1, 1), None]), \
+         patch("engine.actions.type_text", side_effect=lambda t: calls.append(t)):
+        runner.run_loop({
+            "data_source": tmp_csv,
+            "steps": [
+                {"action": "skip_row_if_image", "target": "no_work.png"},
+                {"action": "type", "text": "{csv.MATERIAL_CODE}"},
+            ],
+        }, ds)
+    # แถว 2 (MAT-002) ถูกข้าม ไม่พิมพ์
+    assert calls == ["MAT-001", "MAT-003"]
+
+
+def test_skip_row_unconditional_skips_rest_of_row(mock_interrupt, tmp_csv):
+    runner = make_runner(mock_interrupt)
+    ds = DataSource({})
+    with patch("engine.actions.press_key") as mock_key:
+        runner.run_loop({
+            "data_source": tmp_csv,
+            "steps": [
+                {"action": "skip_row"},
+                {"action": "key", "key": "enter"},  # ต้องไม่ถูกเรียกเลยทุกแถว
+            ],
+        }, ds)
+    mock_key.assert_not_called()
+
+
+def test_skip_row_with_no_csv_ends_loop_gracefully(mock_interrupt):
+    runner = make_runner(mock_interrupt)
+    ds = DataSource({})
+    with patch("engine.actions.press_key") as mock_key:
+        # ไม่มี data_source → skip_row จบ loop เฉยๆ ไม่ raise
+        runner.run_loop({"steps": [
+            {"action": "skip_row"},
+            {"action": "key", "key": "enter"},
+        ]}, ds)
+    mock_key.assert_not_called()
+
+
+# ─── on_row_error policy ─────────────────────────────────────────────────────
+
+def test_on_row_error_skip_continues_to_next_row(mock_interrupt, tmp_csv):
+    from engine.actions import ActionError
+    runner = make_runner(mock_interrupt)
+    ds = DataSource({})
+    calls = []
+
+    def type_side(text):
+        if text == "MAT-002":
+            raise ActionError("ฟิลด์หาย")
+        calls.append(text)
+
+    with patch("engine.actions.type_text", side_effect=type_side):
+        runner.run_loop({
+            "data_source": tmp_csv,
+            "on_row_error": "skip",
+            "steps": [{"action": "type", "text": "{csv.MATERIAL_CODE}"}],
+        }, ds)
+    # แถวที่ error ถูกข้าม batch ไม่ล้ม
+    assert calls == ["MAT-001", "MAT-003"]
+
+
+def test_on_row_error_stop_aborts_whole_batch(mock_interrupt, tmp_csv):
+    from engine.actions import ActionError
+    runner = make_runner(mock_interrupt)
+    ds = DataSource({})
+    calls = []
+
+    def type_side(text):
+        if text == "MAT-002":
+            raise ActionError("ฟิลด์หาย")
+        calls.append(text)
+
+    # default on_row_error=stop → row 2 พัง → ทั้ง batch หยุด (RowError)
+    with patch("engine.actions.type_text", side_effect=type_side):
+        with pytest.raises(RowError):
+            runner.run_loop({
+                "data_source": tmp_csv,
+                "steps": [{"action": "type", "text": "{csv.MATERIAL_CODE}"}],
+            }, ds)
+    assert calls == ["MAT-001"]  # หยุดที่แถว 2 ไม่ถึงแถว 3
