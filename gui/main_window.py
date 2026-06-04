@@ -9,10 +9,9 @@ from engine.data_source import DataSource
 from engine.interrupt_handler import InterruptHandler, BotStoppedError
 from engine.loop_runner import LoopRunner
 from engine.screen_monitor import ScreenMonitor
-from engine.image_matcher import ImageNotFoundError
 from gui.log_panel import LogPanel
 from gui.capture_tool import CaptureTool
-from gui.error_dialog import show_error_dialog
+from gui.error_dialog import show_debug_console
 from gui.sequence_editor import SequenceEditor
 
 
@@ -251,7 +250,7 @@ class MainWindow(tk.Tk):
         loop_cfg = loops[loop_name]
         runner = LoopRunner(
             interrupt=self._interrupt,
-            on_image_not_found=lambda e: self._handle_image_error(e),
+            on_debug=lambda ctx: self._handle_debug(ctx),
             on_log=lambda msg: self._queue_log(msg),
         )
 
@@ -302,7 +301,7 @@ class MainWindow(tk.Tk):
     def _start_agent_mode(self, data_source: DataSource):
         runner = LoopRunner(
             interrupt=self._interrupt,
-            on_image_not_found=lambda e: self._handle_image_error(e),
+            on_debug=lambda ctx: self._handle_debug(ctx),
             on_log=lambda msg: self._queue_log(msg),
         )
         states = self._config.get("states", [])
@@ -348,7 +347,7 @@ class MainWindow(tk.Tk):
         self._status.set("Copilot Mode — รอ state ถัดไป...")
         runner = LoopRunner(
             interrupt=self._interrupt,
-            on_image_not_found=lambda e: self._handle_image_error(e),
+            on_debug=lambda ctx: self._handle_debug(ctx),
             on_log=lambda msg: self._queue_log(msg),
         )
         states = self._config.get("states", [])
@@ -375,12 +374,13 @@ class MainWindow(tk.Tk):
         self._monitor = ScreenMonitor(states=states, on_state_detected=on_state)
         self._monitor.start()
 
-    def _handle_image_error(self, error: ImageNotFoundError) -> str:
-        result = {"value": "stop"}
+    def _handle_debug(self, context: dict) -> dict:
+        """เปิด Debug Console บน main thread แล้วรอ decision dict (เรียกจาก bot thread)"""
+        result = {"value": {"decision": "stop"}}
         event = threading.Event()
 
         def show():
-            r = show_error_dialog(self, error, on_capture_new=self._recapture)
+            r = show_debug_console(self, context, on_recapture=self._recapture)
             result["value"] = r
             event.set()
 

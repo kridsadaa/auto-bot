@@ -8,7 +8,7 @@ Visual automation bot สำหรับทำงานซ้ำๆ บน SAP, 
 - **Sequence Editor** — สร้างและแก้ไข loop ผ่าน GUI ไม่ต้องแก้ไฟล์ config เอง รวมถึง branch ซ้อน (`if_image` then/else, `switch_image` หลาย case), ตัวแปร (Variables) และ States/Triggers
 - **Capture Tool** — ลาก box บนหน้าจอเพื่อ capture trigger / element image ได้เลยไม่ต้องใช้โปรแกรมอื่น
 - **Data Source** — รองรับค่า static, วันที่อัตโนมัติ และ loop ข้อมูลจาก CSV ทีละแถว
-- **Error Dialog** — เมื่อหา image ไม่เจอ bot หยุดและแสดงรูปเปรียบเทียบให้ capture ใหม่ได้ทันที
+- **Live Debugger** — เมื่อ step พลาด (หารูปไม่เจอ/action error) bot หยุดแล้วเปิด Debug Console ให้กู้คืนสด: Retry / ข้าม Step / **Restart Row** / **Inject คำสั่งกู้ภัยแล้ว Retry** / Recapture / Stop
 - **สองโหมด** — Copilot (ยืนยันก่อนทำ) และ Agent (อัตโนมัติเต็ม)
 - **UI Automation** — เล็ง element ด้วย UIA selector (pywinauto) แทนรูปภาพ ทนต่อ resolution/theme/zoom (`click_element`, `set_element_text`, `wait_element`) + ปุ่ม "จิ้ม element" หา selector ให้
 - **File I/O** — อ่าน `.xlsx`/`.csv` เป็น data source และเขียนผลลง `.xlsx`/`.csv` โดยตรง (`write_row`) ไม่ต้องพิมพ์ผ่านหน้าจอ

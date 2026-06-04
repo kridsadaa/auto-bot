@@ -29,9 +29,13 @@ class LoopRunner:
         interrupt: InterruptHandler,
         on_image_not_found: Callable[[ImageNotFoundError], str] = None,
         on_log: Callable[[str], None] = None,
+        on_debug: Callable[[dict], dict] = None,
     ):
         self._interrupt = interrupt
         self._on_image_not_found = on_image_not_found
+        # on_debug: เปิด Debug Console เมื่อ step พลาด → คืน decision dict
+        # (retry/skip/restart/stop/inject) ใช้คุมลำดับ step แบบ interactive
+        self._on_debug = on_debug
         self._on_log = on_log or print
         self._error_guards: list = []
         actions.set_log_callback(self._on_log)
@@ -74,11 +78,61 @@ class LoopRunner:
                 get_logger().info(f"skip_row with no CSV — ending loop: {e}")
 
     def _execute_steps(self, steps: list, data_source: DataSource):
-        for i, step in enumerate(steps, 1):
+        # step-index control → รองรับ retry/skip/restart/inject กลางคันผ่าน Debug Console
+        i = 0
+        while i < len(steps):
             self._interrupt.check()
             self._check_error_guards()
-            get_logger().info(f"Step {i}: {step.get('action')}")
-            self._execute_step(step, data_source)
+            get_logger().info(f"Step {i + 1}: {steps[i].get('action')}")
+            try:
+                self._execute_step(steps[i], data_source)
+                i += 1
+            except (ImageNotFoundError, RowError) as e:
+                i = self._recover(steps, i, e, data_source)
+
+    def _debug_context(self, step: dict, index: int, error: Exception) -> dict:
+        is_image = isinstance(error, ImageNotFoundError)
+        return {
+            "step": step,
+            "index": index,
+            "error": error,
+            "message": str(error),
+            "is_image_error": is_image,
+            "template_path": getattr(error, "template_path", None),
+            "screenshot": getattr(error, "current_screenshot", None),
+        }
+
+    def _recover(self, steps: list, i: int, error: Exception, data_source: DataSource) -> int:
+        """ตัดสินใจกู้คืนเมื่อ step ที่ index i พลาด → คืน index ถัดไป (หรือ raise BotStoppedError)"""
+        # (1) Debug Console แบบ interactive
+        if self._on_debug:
+            d = self._on_debug(self._debug_context(steps[i], i, error)) or {}
+            dec = d.get("decision", "skip")
+            if dec == "retry":
+                return i
+            if dec == "skip":
+                return i + 1
+            if dec == "restart":
+                self._on_log("↩️ Restart — เริ่มลำดับนี้ใหม่")
+                return 0
+            if dec == "stop":
+                raise BotStoppedError(d.get("message", "หยุดจาก Debug Console"))
+            if dec == "inject":
+                inject = d.get("steps", []) or []
+                self._on_log(f"💉 Inject {len(inject)} step แล้ว {d.get('then', 'retry')}")
+                self._execute_steps(inject, data_source)
+                return i if d.get("then", "retry") == "retry" else i + 1
+            return i + 1
+        # (2) legacy on_image_not_found (string) — รักษา behavior/tests เดิม
+        if isinstance(error, ImageNotFoundError) and self._on_image_not_found:
+            dec = self._on_image_not_found(error)
+            if dec == "retry":
+                return i
+            if dec == "skip":
+                return i + 1
+            raise BotStoppedError()
+        # (3) ไม่มี handler (เช่น headless) → โยนต่อให้ run_loop จัดการตาม on_row_error
+        raise error
 
     def _check_error_guards(self):
         """ถ้าเจอรูป error ที่กำหนดไว้บนจอ → หยุดบอททันที"""
@@ -287,16 +341,10 @@ class LoopRunner:
                 self._on_log(f"Unknown action: {action}")
 
         except ImageNotFoundError as e:
+            # ไม่จัดการที่นี่ — ปล่อยขึ้นไปให้ _execute_steps/_recover คุมลำดับ step
             get_logger().error(f"Image not found: {e.template_path}")
             self._on_log(f"Image not found: {e.template_path}")
-            if self._on_image_not_found:
-                decision = self._on_image_not_found(e)
-                if decision == "retry":
-                    self._execute_step(step, data_source)
-                elif decision == "stop":
-                    raise BotStoppedError()
-            else:
-                raise
+            raise
 
         except (BotStoppedError, SkipRowSignal, RowError):
             raise  # control-flow / pass-through — อย่าแปลงเป็น error ชนิดอื่น

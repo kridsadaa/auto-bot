@@ -339,6 +339,99 @@ def test_wait_text_waits_until_filled(mock_interrupt):
         }]}, ds)
 
 
+# ─── Interactive Live Debugger (step-index control via on_debug) ──────────────
+
+def _debug_runner(mock_interrupt, on_debug):
+    return LoopRunner(interrupt=mock_interrupt, on_log=lambda m: None, on_debug=on_debug)
+
+
+def test_debug_retry_reruns_same_step(mock_interrupt):
+    from engine.actions import ActionError
+    runner = _debug_runner(mock_interrupt, on_debug=lambda ctx: {"decision": "retry"})
+    n = []
+
+    def press(key):
+        n.append(key)
+        if len(n) == 1:
+            raise ActionError("first attempt fails")
+
+    with patch("engine.actions.press_key", side_effect=press):
+        runner.run_loop({"steps": [{"action": "key", "key": "enter"}]}, DataSource({}))
+    assert n == ["enter", "enter"]  # retry → กดซ้ำจนผ่าน
+
+
+def test_debug_skip_advances_to_next_step(mock_interrupt):
+    from engine.actions import ActionError
+    runner = _debug_runner(mock_interrupt, on_debug=lambda ctx: {"decision": "skip"})
+    pressed = []
+
+    def press(key):
+        if key == "f1":
+            raise ActionError("always fails")
+        pressed.append(key)
+
+    with patch("engine.actions.press_key", side_effect=press):
+        runner.run_loop({"steps": [
+            {"action": "key", "key": "f1"},
+            {"action": "key", "key": "enter"},
+        ]}, DataSource({}))
+    assert pressed == ["enter"]  # ข้าม f1 → enter ทำงาน
+
+
+def test_debug_restart_returns_to_first_step(mock_interrupt):
+    from engine.actions import ActionError
+    a, b, dbg = [], [], []
+
+    def on_debug(ctx):
+        dbg.append(1)
+        return {"decision": "restart"}
+
+    def press(key):
+        if key == "f1":
+            a.append(1)
+        else:
+            b.append(1)
+            if len(b) == 1:
+                raise ActionError("B fails first time")
+
+    runner = _debug_runner(mock_interrupt, on_debug)
+    with patch("engine.actions.press_key", side_effect=press):
+        runner.run_loop({"steps": [
+            {"action": "key", "key": "f1"},
+            {"action": "key", "key": "enter"},
+        ]}, DataSource({}))
+    assert len(a) == 2 and len(dbg) == 1  # restart → f1 ทำซ้ำ, debug เรียกครั้งเดียว
+
+
+def test_debug_inject_runs_steps_then_retries(mock_interrupt):
+    from engine.actions import ActionError
+    main, esc = [], []
+
+    def on_debug(ctx):
+        return {"decision": "inject", "steps": [{"action": "key", "key": "esc"}], "then": "retry"}
+
+    def press(key):
+        if key == "esc":
+            esc.append(1)
+        else:
+            main.append(1)
+            if len(main) == 1:
+                raise ActionError("boom")
+
+    runner = _debug_runner(mock_interrupt, on_debug)
+    with patch("engine.actions.press_key", side_effect=press):
+        runner.run_loop({"steps": [{"action": "key", "key": "enter"}]}, DataSource({}))
+    assert esc == [1] and len(main) == 2  # inject esc → retry enter จนผ่าน
+
+
+def test_debug_stop_raises(mock_interrupt):
+    from engine.actions import ActionError
+    runner = _debug_runner(mock_interrupt, on_debug=lambda ctx: {"decision": "stop"})
+    with patch("engine.actions.press_key", side_effect=ActionError("x")):
+        with pytest.raises(BotStoppedError):
+            runner.run_loop({"steps": [{"action": "key", "key": "enter"}]}, DataSource({}))
+
+
 # ─── skip_row / skip_row_if_image ────────────────────────────────────────────
 
 def test_skip_row_if_image_skips_only_matching_row(mock_interrupt, tmp_csv):
