@@ -27,7 +27,7 @@ def test_type_step_calls_type_text(mock_interrupt):
 
     with patch("engine.actions.type_text") as mock_type:
         runner.run_loop({"steps": [{"action": "type", "text": "{NAME}"}]}, ds)
-        mock_type.assert_called_once_with("hello", method="paste")
+        mock_type.assert_called_once_with("hello", method="paste", clear=False)
 
 
 def test_type_step_passes_method(mock_interrupt):
@@ -36,7 +36,16 @@ def test_type_step_passes_method(mock_interrupt):
 
     with patch("engine.actions.type_text") as mock_type:
         runner.run_loop({"steps": [{"action": "type", "text": "{NAME}", "method": "type"}]}, ds)
-        mock_type.assert_called_once_with("hello", method="type")
+        mock_type.assert_called_once_with("hello", method="type", clear=False)
+
+
+def test_type_step_passes_clear_first(mock_interrupt):
+    runner = make_runner(mock_interrupt)
+    ds = DataSource({"NAME": "hi"})
+
+    with patch("engine.actions.type_text") as mock_type:
+        runner.run_loop({"steps": [{"action": "type", "text": "{NAME}", "clear_first": True}]}, ds)
+        mock_type.assert_called_once_with("hi", method="paste", clear=True)
 
 
 def test_key_step_calls_press_key(mock_interrupt):

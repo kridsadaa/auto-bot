@@ -276,6 +276,7 @@ class LoopRunner:
                 actions.type_text(
                     data_source.resolve(step["text"]),
                     method=step.get("method", "paste"),
+                    clear=bool(step.get("clear_first", False)),
                 )
             elif action == "key":
                 actions.press_key(step["key"])

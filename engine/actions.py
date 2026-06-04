@@ -100,13 +100,20 @@ def _paste_via_clipboard(text: str) -> bool:
 
 
 @_safe
-def type_text(text: str, interval: float = 0.05, method: str = "paste"):
+def type_text(text: str, interval: float = 0.05, method: str = "paste", clear: bool = False):
     """พิมพ์ข้อความลงช่องที่กำลังโฟกัสอยู่
     method:
       - "paste" (default): วางผ่าน clipboard (Ctrl+V) — เร็ว/ชัวร์กับ SAP & เดสก์ท็อปแอป
                            ถ้า clipboard ใช้ไม่ได้ จะ fallback เป็นการจำลองคีย์ให้เอง
       - "type" / "keys":   จำลองการกดคีย์ทีละตัว (เหมือนพิมพ์มือ) — ใช้กับแอป/ฟิลด์ที่บล็อก paste
+    clear=True: เคลียร์ค่าเดิมในช่องก่อน (Ctrl+A → Delete) กันค่าค้าง/ต่อกัน เช่นช่อง SAP ที่จำค่าเก่า
     """
+    if clear:
+        _log("Clear field (Ctrl+A, Delete)")
+        pyautogui.hotkey("ctrl", "a")
+        time.sleep(0.05)
+        pyautogui.press("delete")
+        time.sleep(0.05)
     _log(f"Type ({method}): {repr(text)}")
     if method in ("type", "keys"):
         keyboard.write(text, delay=interval)

@@ -313,6 +313,11 @@ class StepDialog(tk.Toplevel):
             tk.Label(self._fields_frame,
                      text="  paste = วางผ่าน clipboard (เร็ว, เหมาะ SAP) / type = จำลองกดคีย์ทีละตัว (แอปที่บล็อก paste)",
                      fg="gray", font=("Segoe UI", 8)).pack(anchor="w")
+            self._add_dropdown("clear_first", "เคลียร์ก่อนพิมพ์:", ["no", "yes"],
+                               default=("yes" if self._step.get("clear_first") else "no"))
+            tk.Label(self._fields_frame,
+                     text="  yes = กด Ctrl+A → Delete ลบค่าเดิมก่อน (กันช่อง SAP ที่จำค่าเก่า/ต่อกัน)",
+                     fg="gray", font=("Segoe UI", 8)).pack(anchor="w")
 
         elif action == "key":
             self._add_dropdown("key", "Key:", KEY_OPTIONS, default=self._step.get("key", "enter"))
@@ -735,6 +740,11 @@ class StepDialog(tk.Toplevel):
                 step[key] = [k.strip() for k in val.split("+")]
             elif key in ("columns", "header"):
                 step[key] = [p.strip() for p in val.split(",") if p.strip()]
+            elif key == "clear_first":
+                if val == "yes":
+                    step[key] = True
+                else:
+                    step.pop(key, None)
             else:
                 step[key] = val
 
