@@ -295,6 +295,11 @@ class StepDialog(tk.Toplevel):
             self._add_field("text", "Text / Variable:", default=self._step.get("text", ""))
             tk.Label(self._fields_frame, text="  ตัวอย่าง: {USERNAME}  {TODAY}  {csv.COL}",
                      fg="gray", font=("Segoe UI", 8)).pack(anchor="w")
+            self._add_dropdown("method", "วิธีพิมพ์:", ["paste", "type"],
+                               default=self._step.get("method", "paste"))
+            tk.Label(self._fields_frame,
+                     text="  paste = วางผ่าน clipboard (เร็ว, เหมาะ SAP) / type = จำลองกดคีย์ทีละตัว (แอปที่บล็อก paste)",
+                     fg="gray", font=("Segoe UI", 8)).pack(anchor="w")
 
         elif action == "key":
             self._add_dropdown("key", "Key:", KEY_OPTIONS, default=self._step.get("key", "enter"))

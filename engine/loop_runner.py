@@ -192,7 +192,10 @@ class LoopRunner:
             elif action == "click":
                 actions.click(step["x"], step["y"])
             elif action == "type":
-                actions.type_text(data_source.resolve(step["text"]))
+                actions.type_text(
+                    data_source.resolve(step["text"]),
+                    method=step.get("method", "paste"),
+                )
             elif action == "key":
                 actions.press_key(step["key"])
             elif action == "hotkey":

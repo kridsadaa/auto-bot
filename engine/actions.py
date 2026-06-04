@@ -100,9 +100,18 @@ def _paste_via_clipboard(text: str) -> bool:
 
 
 @_safe
-def type_text(text: str, interval: float = 0.05):
-    _log(f"Type: {repr(text)}")
-    # SAP/desktop รับ keystroke ทีละตัวไม่ทัน → ใช้ clipboard paste ก่อน
+def type_text(text: str, interval: float = 0.05, method: str = "paste"):
+    """พิมพ์ข้อความลงช่องที่กำลังโฟกัสอยู่
+    method:
+      - "paste" (default): วางผ่าน clipboard (Ctrl+V) — เร็ว/ชัวร์กับ SAP & เดสก์ท็อปแอป
+                           ถ้า clipboard ใช้ไม่ได้ จะ fallback เป็นการจำลองคีย์ให้เอง
+      - "type" / "keys":   จำลองการกดคีย์ทีละตัว (เหมือนพิมพ์มือ) — ใช้กับแอป/ฟิลด์ที่บล็อก paste
+    """
+    _log(f"Type ({method}): {repr(text)}")
+    if method in ("type", "keys"):
+        keyboard.write(text, delay=interval)
+        return
+    # default = paste: SAP/desktop รับ keystroke ทีละตัวไม่ทัน → ใช้ clipboard ก่อน
     if _paste_via_clipboard(text):
         return
     keyboard.write(text, delay=interval)

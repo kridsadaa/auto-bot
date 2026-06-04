@@ -27,7 +27,16 @@ def test_type_step_calls_type_text(mock_interrupt):
 
     with patch("engine.actions.type_text") as mock_type:
         runner.run_loop({"steps": [{"action": "type", "text": "{NAME}"}]}, ds)
-        mock_type.assert_called_once_with("hello")
+        mock_type.assert_called_once_with("hello", method="paste")
+
+
+def test_type_step_passes_method(mock_interrupt):
+    runner = make_runner(mock_interrupt)
+    ds = DataSource({"NAME": "hello"})
+
+    with patch("engine.actions.type_text") as mock_type:
+        runner.run_loop({"steps": [{"action": "type", "text": "{NAME}", "method": "type"}]}, ds)
+        mock_type.assert_called_once_with("hello", method="type")
 
 
 def test_key_step_calls_press_key(mock_interrupt):
@@ -77,7 +86,7 @@ def test_csv_loop_iterates_all_rows(mock_interrupt, tmp_csv):
     ds = DataSource({})
 
     calls = []
-    with patch("engine.actions.type_text", side_effect=lambda t: calls.append(t)):
+    with patch("engine.actions.type_text", side_effect=lambda t, **kw: calls.append(t)):
         runner.run_loop(
             {"data_source": tmp_csv, "steps": [{"action": "type", "text": "{csv.MATERIAL_CODE}"}]},
             ds,
@@ -279,7 +288,7 @@ def test_skip_row_if_image_skips_only_matching_row(mock_interrupt, tmp_csv):
     calls = []
     # find_on_screen ถูกเรียก 1 ครั้ง/แถว (จาก skip_row_if_image) — เจอเฉพาะแถว 2
     with patch("engine.loop_runner.find_on_screen", side_effect=[None, (1, 1), None]), \
-         patch("engine.actions.type_text", side_effect=lambda t: calls.append(t)):
+         patch("engine.actions.type_text", side_effect=lambda t, **kw: calls.append(t)):
         runner.run_loop({
             "data_source": tmp_csv,
             "steps": [
@@ -325,7 +334,7 @@ def test_on_row_error_skip_continues_to_next_row(mock_interrupt, tmp_csv):
     ds = DataSource({})
     calls = []
 
-    def type_side(text):
+    def type_side(text, **kw):
         if text == "MAT-002":
             raise ActionError("ฟิลด์หาย")
         calls.append(text)
@@ -346,7 +355,7 @@ def test_on_row_error_stop_aborts_whole_batch(mock_interrupt, tmp_csv):
     ds = DataSource({})
     calls = []
 
-    def type_side(text):
+    def type_side(text, **kw):
         if text == "MAT-002":
             raise ActionError("ฟิลด์หาย")
         calls.append(text)
