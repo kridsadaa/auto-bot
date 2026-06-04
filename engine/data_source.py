@@ -22,6 +22,23 @@ class DataSource:
             self._csv_rows = self._load_rows(csv_path)
 
     @staticmethod
+    def read_headers(path: str) -> list:
+        """อ่านเฉพาะชื่อคอลัมน์ (header) จาก csv/xlsx — คืน [] ถ้าอ่านไม่ได้"""
+        if not path:
+            return []
+        import os
+        ext = os.path.splitext(path)[1].lower()
+        try:
+            if ext in (".xlsx", ".xls", ".xlsm"):
+                df = pd.read_excel(path, nrows=0)
+            else:
+                df = pd.read_csv(path, nrows=0)
+            return [str(c) for c in df.columns]
+        except Exception as e:
+            get_logger().warning(f"read_headers('{path}') ไม่สำเร็จ: {e}")
+            return []
+
+    @staticmethod
     def _load_rows(path: str) -> list[dict]:
         """อ่านข้อมูลตาราง — รองรับ .csv และ .xlsx/.xls (ทุกค่าเป็น string)"""
         import os

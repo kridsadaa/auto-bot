@@ -1,13 +1,18 @@
 """
-Recorder (v1) — อัดการคลิก/พิมพ์เป็น step อัตโนมัติ
-บันทึกเป็นพิกัด x,y + คีย์ (ไม่พึ่ง lib เพิ่ม ใช้ pynput ที่มีอยู่)
+Recorder — อัดการคลิก/พิมพ์เป็น step อัตโนมัติ
+mode="image": คลิก → ครอปรูปรอบจุด → สร้าง click_image (ทนทานกว่าพิกัด)
+mode="coords": คลิก → พิกัด x,y (เปราะกว่า)
 กด F10 เพื่อหยุดอัด
 """
+import os
+import time
 import tkinter as tk
 
+import pyautogui
 from pynput import keyboard as _kb, mouse as _ms
 
 STOP_KEY = _kb.Key.f10
+CROP_RADIUS = 30  # ครึ่งหนึ่งของกรอบครอป → กรอบ 60×60 รอบจุดคลิก
 
 # pynput special key → ชื่อคีย์ของระบบ (ตรงกับ pyautogui.press)
 SPECIAL_KEYS = {
@@ -56,6 +61,10 @@ def events_to_steps(events: list) -> list:
         elif kind == "click":
             flush()
             steps.append({"action": "click", "x": ev[1], "y": ev[2]})
+        elif kind == "click_image":
+            flush()
+            # ครอปให้จุดคลิกอยู่กลางรูป → click_image คลิกกลางรูป = จุดเดิมพอดี (ไม่ต้อง offset)
+            steps.append({"action": "click_image", "target": ev[1]})
     flush()
     return steps
 
@@ -63,9 +72,11 @@ def events_to_steps(events: list) -> list:
 class Recorder:
     """อัด mouse click + keystroke ทั่วทั้งจอ จนกด F10 → คืน steps ผ่าน on_done"""
 
-    def __init__(self, parent, on_done):
+    def __init__(self, parent, on_done, mode: str = "image", capture_dir: str = "elements"):
         self._parent = parent
         self._on_done = on_done
+        self._mode = mode  # "image" (click_image) | "coords" (click x,y)
+        self._capture_dir = capture_dir
         self._events: list = []
         self._mouse: _ms.Listener = None
         self._kb_listener: _kb.Listener = None
@@ -98,8 +109,34 @@ class Recorder:
         self._parent.after(0, lambda: self._on_done(steps))
 
     def _on_click(self, x, y, button, pressed):
-        if pressed and button == _ms.Button.left:
-            self._events.append(("click", int(x), int(y)))
+        if not (pressed and button == _ms.Button.left):
+            return
+        x, y = int(x), int(y)
+        if self._mode == "image":
+            path = self._capture_click_image(x, y)
+            if path:
+                self._events.append(("click_image", path))
+                return
+        self._events.append(("click", x, y))  # coords mode หรือ fallback
+
+    def _capture_click_image(self, x: int, y: int) -> str | None:
+        """ครอปกรอบ 60×60 รอบจุดคลิก (จุดอยู่กลาง) เซฟเป็น element image → คืน relpath"""
+        try:
+            os.makedirs(self._capture_dir, exist_ok=True)
+            shot = pyautogui.screenshot()
+            w, h = shot.size
+            left = max(0, x - CROP_RADIUS)
+            top = max(0, y - CROP_RADIUS)
+            right = min(w, x + CROP_RADIUS)
+            bottom = min(h, y + CROP_RADIUS)
+            if right - left < 4 or bottom - top < 4:
+                return None
+            crop = shot.crop((left, top, right, bottom))
+            path = os.path.join(self._capture_dir, f"rec_{int(time.time() * 1000)}.png")
+            crop.save(path)
+            return os.path.relpath(path)
+        except Exception:
+            return None
 
     def _on_press(self, key):
         if key == STOP_KEY:

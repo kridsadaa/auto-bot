@@ -42,6 +42,27 @@ def test_append_row_xlsx_roundtrip(tmp_path):
     assert got == [["CODE", "QTY"], ["MAT-001", "10"], ["MAT-002", "5"]]
 
 
+def test_read_headers_csv(tmp_path):
+    p = tmp_path / "h.csv"
+    p.write_text("MATERIAL_CODE,QTY,WORK_STATION\nMAT-001,10,WS-A01\n", encoding="utf-8")
+    assert DataSource.read_headers(str(p)) == ["MATERIAL_CODE", "QTY", "WORK_STATION"]
+
+
+def test_read_headers_xlsx(tmp_path):
+    from openpyxl import Workbook
+    p = tmp_path / "h.xlsx"
+    wb = Workbook()
+    wb.active.append(["CODE", "QTY"])
+    wb.active.append(["MAT-001", "10"])
+    wb.save(str(p))
+    assert DataSource.read_headers(str(p)) == ["CODE", "QTY"]
+
+
+def test_read_headers_missing_file_returns_empty():
+    assert DataSource.read_headers("does/not/exist.csv") == []
+    assert DataSource.read_headers("") == []
+
+
 def test_datasource_reads_xlsx(tmp_path):
     from openpyxl import Workbook
     p = tmp_path / "src.xlsx"

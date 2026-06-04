@@ -43,3 +43,17 @@ def test_mixed_sequence():
 
 def test_empty_events():
     assert events_to_steps([]) == []
+
+
+def test_click_image_event_becomes_click_image_step():
+    steps = events_to_steps([("click_image", "elements/rec_1.png")])
+    assert steps == [{"action": "click_image", "target": "elements/rec_1.png"}]
+
+
+def test_click_image_mixed_with_typing():
+    events = [("char", "h"), ("char", "i"), ("click_image", "elements/a.png"), ("key", "tab")]
+    assert events_to_steps(events) == [
+        {"action": "type", "text": "hi", "method": "type"},
+        {"action": "click_image", "target": "elements/a.png"},
+        {"action": "key", "key": "tab"},
+    ]
