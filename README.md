@@ -6,7 +6,7 @@ Visual automation bot สำหรับทำงานซ้ำๆ บน SAP, 
 
 - **Image Trigger** — bot จับภาพหน้าจอแล้วเทียบกับรูปที่กำหนดไว้ เมื่อเจอหน้าที่ตรงกันจะเริ่ม loop ที่ผูกไว้โดยอัตโนมัติ
 - **Sequence Editor** — สร้างและแก้ไข loop ผ่าน GUI ไม่ต้องแก้ไฟล์ config เอง รวมถึง branch ซ้อน (`if_image` then/else, `switch_image` หลาย case), ตัวแปร (Variables) และ States/Triggers
-- **Capture Tool** — ลาก box บนหน้าจอเพื่อ capture trigger / element image ได้เลยไม่ต้องใช้โปรแกรมอื่น
+- **Capture Tool** — ลาก box บนหน้าจอเพื่อ capture trigger / element image ได้เลยไม่ต้องใช้โปรแกรมอื่น; รูปที่ capture ในขณะแก้ loop จะถูกเซฟลงโฟลเดอร์ `elements/<ชื่อ loop>/` อัตโนมัติ (กันชื่อชนข้าม loop)
 - **Data Source** — รองรับค่า static, วันที่อัตโนมัติ และ loop ข้อมูลจาก CSV ทีละแถว
 - **Live Debugger** — เมื่อ step พลาด (หารูปไม่เจอ/action error) bot หยุดแล้วเปิด Debug Console ให้กู้คืนสด: Retry / ข้าม Step / **Restart Row** / **Inject คำสั่งกู้ภัยแล้ว Retry** / Recapture / Stop
 - **สองโหมด** — Copilot (ยืนยันก่อนทำ) และ Agent (อัตโนมัติเต็ม)
@@ -245,7 +245,18 @@ python main.py --run-loop <ชื่อ loop> [--config config/bot_config.yaml]
 
 ## Recorder
 
-ใน Sequence Editor กดปุ่ม **⏺ Record** → คลิก/พิมพ์ตามต้องการ → กด **F10** เพื่อหยุด ระบบจะแปลงเป็น step (`click` พิกัด, `type`, `key`) แล้วต่อท้าย loop ที่เลือก (v1 บันทึกเป็นพิกัดหน้าจอ)
+ใน Sequence Editor กดปุ่ม **⏺ Record** → คลิก/พิมพ์ตามต้องการ → กด **F10** เพื่อหยุด ระบบจะแปลงเป็น step (`click_image` ครอปรูปรอบจุดคลิก, `type`, `key`) แล้วต่อท้าย loop ที่เลือก
+
+## Export / Import Loop (แชร์แล้วพร้อมใช้)
+
+ใน Sequence Editor:
+- **⬆ Export loop** — แพ็ก loop ที่เลือก (รูป element/trigger ทั้งหมด + state ที่ชี้ loop นี้) เป็นไฟล์เดียว `*.botpack` ส่งให้คนอื่นได้เลย
+- **⬇ Import loop** — เปิด `.botpack` → แตกรูปลง `elements/<loop>/` + เพิ่ม loop/state เข้า config อัตโนมัติ → **รันได้ทันที**
+
+ความปลอดภัย/ข้อควรรู้:
+- **ค่าตัวแปร (USERNAME/PASSWORD) ไม่ถูกแนบ** — ส่งแค่ "ชื่อ" ค่าว่าง ปลายทางกรอกเองตอน Start
+- ไฟล์ข้อมูล CSV/xlsx จะ**ถามก่อน**ว่าจะแนบไปด้วยไหม (กันข้อมูล sensitive หลุด)
+- ชื่อ loop/state ที่ชนกับของเดิม → เปลี่ยนชื่ออัตโนมัติ ไม่ทับของที่มีอยู่
 
 ---
 

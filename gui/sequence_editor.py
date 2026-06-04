@@ -242,7 +242,7 @@ class RegionPicker(tk.Toplevel):
 class StepDialog(tk.Toplevel):
     """Dialog สำหรับเพิ่มหรือแก้ไข step"""
 
-    def __init__(self, parent, step: dict = None, csv_columns: list = None):
+    def __init__(self, parent, step: dict = None, csv_columns: list = None, capture_dir: str = "elements"):
         super().__init__(parent)
         self.title("แก้ไข Step" if step else "เพิ่ม Step")
         self.resizable(False, False)
@@ -250,6 +250,7 @@ class StepDialog(tk.Toplevel):
         self._result: dict = None
         self._step = step or {}
         self._csv_columns = csv_columns or []  # คอลัมน์ CSV ของ loop (สำหรับ dropdown ในช่อง type)
+        self._capture_dir = capture_dir or "elements"  # โฟลเดอร์เซฟรูปของ loop นี้ (กันชื่อชนข้าม loop)
         self._fields: dict[str, tk.Variable] = {}
         self._offset_label = None
         ox, oy = self._step.get("offset_x"), self._step.get("offset_y")
@@ -392,10 +393,10 @@ class StepDialog(tk.Toplevel):
         elif action == "if_image":
             self._add_field("target", "Image file:", browse=True)
             self._add_field("confidence", "Confidence:", default=str(self._step.get("confidence", 0.85)))
-            NestedStepsEditor(self._fields_frame, self._then, "THEN — ทำเมื่อ 'เจอ' รูป:",
-                              height=4, csv_columns=self._csv_columns).pack(fill="both", expand=True, pady=(8, 2))
-            NestedStepsEditor(self._fields_frame, self._else, "ELSE — ทำเมื่อ 'ไม่เจอ' รูป:",
-                              height=4, csv_columns=self._csv_columns).pack(fill="both", expand=True, pady=2)
+            NestedStepsEditor(self._fields_frame, self._then, "THEN — ทำเมื่อ 'เจอ' รูป:", height=4,
+                              csv_columns=self._csv_columns, capture_dir=self._capture_dir).pack(fill="both", expand=True, pady=(8, 2))
+            NestedStepsEditor(self._fields_frame, self._else, "ELSE — ทำเมื่อ 'ไม่เจอ' รูป:", height=4,
+                              csv_columns=self._csv_columns, capture_dir=self._capture_dir).pack(fill="both", expand=True, pady=2)
 
         elif action == "switch_image":
             self._add_field("confidence", "Confidence (default):", default=str(self._step.get("confidence", 0.85)))
@@ -403,8 +404,8 @@ class StepDialog(tk.Toplevel):
                      text="  ไล่เช็ก case จากบนลงล่าง — เจอรูปแรกที่ตรง รัน case นั้น; ไม่เข้าเลย → default",
                      fg="gray", font=("Segoe UI", 8)).pack(anchor="w")
             self._build_cases_editor()
-            NestedStepsEditor(self._fields_frame, self._default, "DEFAULT — ทำเมื่อไม่เข้า case ใด:",
-                              height=3, csv_columns=self._csv_columns).pack(fill="both", expand=True, pady=(8, 2))
+            NestedStepsEditor(self._fields_frame, self._default, "DEFAULT — ทำเมื่อไม่เข้า case ใด:", height=3,
+                              csv_columns=self._csv_columns, capture_dir=self._capture_dir).pack(fill="both", expand=True, pady=(8, 2))
 
         elif action == "write_row":
             row = tk.Frame(self._fields_frame)
@@ -532,7 +533,7 @@ class StepDialog(tk.Toplevel):
             self._cases_listbox.insert("end", f" {i:2d}. {target}  ({len(case.get('steps', []))} steps)")
 
     def _add_case(self):
-        dlg = CaseDialog(self, csv_columns=self._csv_columns)
+        dlg = CaseDialog(self, csv_columns=self._csv_columns, capture_dir=self._capture_dir)
         self.wait_window(dlg)
         if dlg.get_result():
             self._cases.append(dlg.get_result())
@@ -543,7 +544,7 @@ class StepDialog(tk.Toplevel):
         if not sel:
             return
         idx = sel[0]
-        dlg = CaseDialog(self, self._cases[idx], csv_columns=self._csv_columns)
+        dlg = CaseDialog(self, self._cases[idx], csv_columns=self._csv_columns, capture_dir=self._capture_dir)
         self.wait_window(dlg)
         if dlg.get_result():
             self._cases[idx] = dlg.get_result()
@@ -676,15 +677,17 @@ class StepDialog(tk.Toplevel):
             self._update_offset_label()
 
     def _browse(self, var: tk.StringVar):
+        initial = self._capture_dir if os.path.isdir(self._capture_dir) else "elements"
         path = filedialog.askopenfilename(
-            title="เลือก image", initialdir="elements",
+            title="เลือก image", initialdir=initial,
             filetypes=[("PNG", "*.png"), ("All", "*.*")],
         )
         if path:
             var.set(os.path.relpath(path))
 
     def _capture(self, var: tk.StringVar):
-        """ซ่อน dialog ชั่วคราว → เปิด capture overlay → คืน path ลงช่อง target"""
+        """ซ่อน dialog ชั่วคราว → เปิด capture overlay → คืน path ลงช่อง target
+        เซฟลงโฟลเดอร์ของ loop นี้ (self._capture_dir) เพื่อกันชื่อชนข้าม loop"""
         self.withdraw()
 
         def on_done(path: str):
@@ -700,7 +703,7 @@ class StepDialog(tk.Toplevel):
         from gui.capture_tool import CaptureTool
         tool = CaptureTool(
             root=self,
-            save_dir="elements",
+            save_dir=self._capture_dir,
             on_done=on_done,
             on_cancel=on_cancel,
         )
@@ -778,10 +781,12 @@ class NestedStepsEditor(tk.Frame):
     """แก้ไข list ของ step ย่อย — ใช้ใน then/else ของ if_image และ cases/default ของ switch_image
     เปิด StepDialog ซ้ำแบบ recursive (StepDialog เป็น modal grab_set ซ้อนกันได้)"""
 
-    def __init__(self, parent, steps: list, title: str, height: int = 5, csv_columns: list = None):
+    def __init__(self, parent, steps: list, title: str, height: int = 5,
+                 csv_columns: list = None, capture_dir: str = "elements"):
         super().__init__(parent)
         self._steps = steps  # อ้างถึง list เดิม → แก้ใน place
         self._csv_columns = csv_columns or []
+        self._capture_dir = capture_dir or "elements"
 
         tk.Label(self, text=title, anchor="w", fg="#0e639c",
                  font=("Segoe UI", 9, "bold")).pack(fill="x")
@@ -815,7 +820,8 @@ class NestedStepsEditor(tk.Frame):
             self._listbox.insert("end", f" {i:2d}. {_step_label(step)}")
 
     def _open_dialog(self, step: dict = None) -> dict | None:
-        dlg = StepDialog(self.winfo_toplevel(), step, csv_columns=self._csv_columns)
+        dlg = StepDialog(self.winfo_toplevel(), step,
+                         csv_columns=self._csv_columns, capture_dir=self._capture_dir)
         self.wait_window(dlg)
         return dlg.get_result()
 
@@ -870,13 +876,14 @@ class NestedStepsEditor(tk.Frame):
 class CaseDialog(tk.Toplevel):
     """แก้ไข 1 case ของ switch_image: target + confidence + steps"""
 
-    def __init__(self, parent, case: dict = None, csv_columns: list = None):
+    def __init__(self, parent, case: dict = None, csv_columns: list = None, capture_dir: str = "elements"):
         super().__init__(parent)
         self.title("แก้ไข Case" if case else "เพิ่ม Case")
         self.grab_set()
         self._result = None
         self._case = case or {}
         self._csv_columns = csv_columns or []
+        self._capture_dir = capture_dir or "elements"
         self._steps = copy.deepcopy(self._case.get("steps", []))
         self._build()
         self._center()
@@ -901,7 +908,7 @@ class CaseDialog(tk.Toplevel):
                  font=("Segoe UI", 8)).pack(side="left", padx=4)
 
         NestedStepsEditor(self, self._steps, "Steps ของ case นี้:", height=5,
-                          csv_columns=self._csv_columns).pack(
+                          csv_columns=self._csv_columns, capture_dir=self._capture_dir).pack(
             fill="both", expand=True, padx=10, pady=4)
 
         btn = tk.Frame(self)
@@ -910,8 +917,9 @@ class CaseDialog(tk.Toplevel):
         tk.Button(btn, text="ยกเลิก", width=10, command=self.destroy).pack(side="left", padx=6)
 
     def _browse(self):
+        initial = self._capture_dir if os.path.isdir(self._capture_dir) else "elements"
         path = filedialog.askopenfilename(
-            title="เลือก image", initialdir="elements",
+            title="เลือก image", initialdir=initial,
             filetypes=[("PNG", "*.png"), ("All", "*.*")],
         )
         if path:
@@ -931,7 +939,7 @@ class CaseDialog(tk.Toplevel):
             self.lift()
 
         from gui.capture_tool import CaptureTool
-        tool = CaptureTool(root=self, save_dir="elements", on_done=on_done, on_cancel=on_cancel)
+        tool = CaptureTool(root=self, save_dir=self._capture_dir, on_done=on_done, on_cancel=on_cancel)
         self.after(200, tool.start)
 
     def _save(self):
@@ -1335,6 +1343,10 @@ class SequenceEditor(tk.Toplevel):
         tk.Button(btn_left, text="🔧 ตัวแปร", command=self._edit_variables).pack(fill="x", pady=2)
         tk.Button(btn_left, text="🖥 States", command=self._edit_states).pack(fill="x", pady=2)
 
+        tk.Frame(btn_left, height=1, bg="#3a3a3a").pack(fill="x", pady=6)
+        tk.Button(btn_left, text="⬆ Export loop", command=self._export_loop).pack(fill="x", pady=2)
+        tk.Button(btn_left, text="⬇ Import loop", command=self._import_loop).pack(fill="x", pady=2)
+
         # ─ Right panel: steps ─
         right = tk.Frame(self, bg="#2d2d2d")
         right.pack(side="left", fill="both", expand=True)
@@ -1460,6 +1472,67 @@ class SequenceEditor(tk.Toplevel):
         dlg = StatesDialog(self, self._config)
         self.wait_window(dlg)
 
+    # ─── Export / Import loop (.botpack) ────────────────────────────────────
+
+    def _export_loop(self):
+        if not self._selected_loop:
+            messagebox.showwarning("", "เลือก loop ที่จะ export ก่อน")
+            return
+        loop_cfg = self._config["loops"][self._selected_loop]
+        include_data = False
+        if loop_cfg.get("data_source"):
+            include_data = messagebox.askyesno(
+                "แนบไฟล์ข้อมูล?",
+                f"loop นี้ใช้ข้อมูล: {loop_cfg['data_source']}\n\n"
+                "แนบไฟล์ข้อมูลไปในแพ็กด้วยไหม?\n(ข้อมูลจะติดไปกับไฟล์ที่แชร์)",
+                parent=self,
+            )
+        path = filedialog.asksaveasfilename(
+            title="Export loop", initialfile=f"{self._selected_loop}.botpack",
+            defaultextension=".botpack",
+            filetypes=[("Auto Bot pack", "*.botpack"), ("Zip", "*.zip")],
+        )
+        if not path:
+            return
+        try:
+            from engine.loop_package import build_package
+            summary = build_package(self._config, self._selected_loop, path, include_data=include_data)
+        except Exception as e:
+            messagebox.showerror("Export error", str(e), parent=self)
+            return
+        msg = f"Export สำเร็จ: {os.path.basename(path)}\nรูป {len(summary['assets'])} ไฟล์"
+        if summary["missing"]:
+            miss = "\n".join(os.path.basename(m) for m in summary["missing"])
+            msg += f"\n\n⚠️ รูปหาย {len(summary['missing'])} ไฟล์ (ไม่ถูกแนบ):\n{miss}"
+        if summary["variables"]:
+            msg += f"\n\nตัวแปรที่ปลายทางต้องกรอกค่า: {', '.join(summary['variables'])}"
+        messagebox.showinfo("Export", msg, parent=self)
+
+    def _import_loop(self):
+        path = filedialog.askopenfilename(
+            title="Import loop",
+            filetypes=[("Auto Bot pack", "*.botpack"), ("Zip", "*.zip"), ("All", "*.*")],
+        )
+        if not path:
+            return
+        try:
+            from engine.loop_package import import_package
+            merged, summary = import_package(self._config, path)
+        except Exception as e:
+            messagebox.showerror("Import error", str(e), parent=self)
+            return
+        self._config = merged
+        self._save_config()  # เซฟลงไฟล์ทันที
+        self._refresh_loop_list()
+        msg = f"Import สำเร็จ → loop: {summary['loop_name']}"
+        if summary["renamed"]:
+            msg += "  (เปลี่ยนชื่อกันซ้ำ)"
+        if summary["added_variables"]:
+            msg += f"\nตัวแปรที่ต้องไปกรอกค่า: {', '.join(summary['added_variables'])}"
+        if summary["states"]:
+            msg += f"\nState ที่เพิ่ม: {', '.join(summary['states'])}"
+        messagebox.showinfo("Import", msg, parent=self)
+
     def _record_steps(self):
         if not self._selected_loop:
             messagebox.showwarning("", "เลือก loop ก่อน")
@@ -1506,11 +1579,19 @@ class SequenceEditor(tk.Toplevel):
         from engine.data_source import DataSource
         return DataSource.read_headers(path)
 
+    def _loop_capture_dir(self) -> str:
+        """โฟลเดอร์เซฟรูปของ loop ที่เลือก = elements/<ชื่อ loop> (กันชื่อชนข้าม loop)"""
+        if not self._selected_loop:
+            return "elements"
+        safe = "".join(c if (c.isalnum() or c in "-_") else "_" for c in self._selected_loop)
+        return os.path.join("elements", safe)
+
     def _add_step(self):
         if not self._selected_loop:
             messagebox.showwarning("", "เลือก loop ก่อน")
             return
-        dlg = StepDialog(self, csv_columns=self._loop_csv_columns())
+        dlg = StepDialog(self, csv_columns=self._loop_csv_columns(),
+                         capture_dir=self._loop_capture_dir())
         self.wait_window(dlg)
         if dlg.get_result():
             sel = self._step_listbox.curselection()
@@ -1524,7 +1605,8 @@ class SequenceEditor(tk.Toplevel):
         if not sel:
             return
         idx = sel[0]
-        dlg = StepDialog(self, self._steps()[idx], csv_columns=self._loop_csv_columns())
+        dlg = StepDialog(self, self._steps()[idx], csv_columns=self._loop_csv_columns(),
+                         capture_dir=self._loop_capture_dir())
         self.wait_window(dlg)
         if dlg.get_result():
             self._steps()[idx] = dlg.get_result()
