@@ -6,13 +6,16 @@ class InterruptHandler:
     """
     จัดการ interrupt สองแบบ:
     1. pyautogui FAILSAFE — ขยับ mouse ไปมุมซ้ายบน → ยกเลิกทันที (built-in)
-    2. ESC key → pause/resume
+    2. ESC key (global ทุกหน้าต่าง) → หยุดบอททันที (panic stop)
+       * pause/resume ใช้ปุ่มใน GUI แทน
     """
 
-    def __init__(self):
+    def __init__(self, on_stop_hotkey=None):
         self._paused = False
         self._stopped = False
         self._listener: keyboard.Listener = None
+        # callback ให้ GUI รู้ว่ากด ESC หยุด (เพื่อหยุด monitor + reset UI แม้ไม่มี loop รันอยู่)
+        self._on_stop_hotkey = on_stop_hotkey
 
     def start(self):
         self._paused = False
@@ -28,10 +31,12 @@ class InterruptHandler:
 
     def _on_key(self, key):
         if key == keyboard.Key.esc:
-            if self._paused:
-                self._paused = False
-            else:
-                self._paused = True
+            self._stopped = True
+            if self._on_stop_hotkey:
+                try:
+                    self._on_stop_hotkey()
+                except Exception:
+                    pass
 
     def is_paused(self) -> bool:
         return self._paused

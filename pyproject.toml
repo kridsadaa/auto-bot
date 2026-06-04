@@ -1,6 +1,6 @@
 [build-system]
 requires = ["setuptools>=68"]
-build-backend = "setuptools.backends.legacy:build"
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "auto-bot"
@@ -16,9 +16,12 @@ dependencies = [
     "pyyaml==6.0.3",
     "pandas==2.2.3",
     "playwright==1.50.0",
-    "pywinauto==0.6.8",
+    "pywinauto==0.6.9",
     "pywin32==308",
     "keyboard==0.13.5",
+    "pyperclip==1.9.0",
+    "pytesseract==0.3.10",
+    "openpyxl==3.1.5",
 ]
 
 [project.optional-dependencies]

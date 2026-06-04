@@ -267,6 +267,65 @@ def test_switch_image_no_default_no_match_does_nothing(mock_interrupt):
     mock_key.assert_not_called()
 
 
+# ─── UI element actions ──────────────────────────────────────────────────────
+
+def test_click_element_builds_selector(mock_interrupt):
+    runner = make_runner(mock_interrupt)
+    ds = DataSource({})
+    with patch("engine.actions.click_element") as m:
+        runner.run_loop({"steps": [{
+            "action": "click_element", "window": "Notepad",
+            "auto_id": "15", "control_type": "Edit", "class_name": "",
+            "timeout": 5,
+        }]}, ds)
+    # class_name ว่าง → ไม่เข้า selector
+    m.assert_called_once_with(
+        {"window": "Notepad", "auto_id": "15", "control_type": "Edit"},
+        timeout=5, button="left",
+    )
+
+
+def test_set_element_text_resolves_text(mock_interrupt):
+    runner = make_runner(mock_interrupt)
+    ds = DataSource({"X": "hi"})
+    with patch("engine.actions.set_element_text") as m:
+        runner.run_loop({"steps": [{
+            "action": "set_element_text", "name": "Field", "text": "{X}",
+        }]}, ds)
+    m.assert_called_once_with({"name": "Field"}, "hi", timeout=10)
+
+
+def test_wait_element_passes_timeout(mock_interrupt):
+    runner = make_runner(mock_interrupt)
+    ds = DataSource({})
+    with patch("engine.actions.wait_element") as m:
+        runner.run_loop({"steps": [{
+            "action": "wait_element", "auto_id": "ok", "timeout": 8,
+        }]}, ds)
+    m.assert_called_once_with({"auto_id": "ok"}, timeout=8)
+
+
+# ─── write_row ───────────────────────────────────────────────────────────────
+
+def test_write_row_resolves_and_appends(mock_interrupt, tmp_csv):
+    runner = make_runner(mock_interrupt)
+    ds = DataSource({})
+    with patch("engine.file_writer.append_row") as mock_append:
+        runner.run_loop({
+            "data_source": tmp_csv,
+            "steps": [{
+                "action": "write_row",
+                "path": "out.csv",
+                "columns": ["{csv.MATERIAL_CODE}", "{csv.QTY}"],
+                "header": ["CODE", "QTY"],
+            }],
+        }, ds)
+    # 3 แถวใน CSV → เรียก append_row 3 ครั้ง ด้วยค่า resolve แล้ว
+    assert mock_append.call_count == 3
+    mock_append.assert_any_call("out.csv", ["MAT-001", "10"], ["CODE", "QTY"])
+    mock_append.assert_any_call("out.csv", ["MAT-003", "20"], ["CODE", "QTY"])
+
+
 # ─── wait_text ───────────────────────────────────────────────────────────────
 
 def test_wait_text_waits_until_filled(mock_interrupt):
@@ -368,3 +427,38 @@ def test_on_row_error_stop_aborts_whole_batch(mock_interrupt, tmp_csv):
                 "steps": [{"action": "type", "text": "{csv.MATERIAL_CODE}"}],
             }, ds)
     assert calls == ["MAT-001"]  # หยุดที่แถว 2 ไม่ถึงแถว 3
+
+
+def test_hotkey_list_keys(mock_interrupt):
+    runner = make_runner(mock_interrupt)
+    ds = DataSource({})
+    with patch("engine.actions.hotkey") as mock_hotkey:
+        runner.run_loop({
+            "steps": [{"action": "hotkey", "keys": ["ctrl", "s"]}],
+        }, ds)
+        mock_hotkey.assert_called_once_with("ctrl", "s")
+
+
+def test_hotkey_string_keys(mock_interrupt):
+    runner = make_runner(mock_interrupt)
+    ds = DataSource({})
+    with patch("engine.actions.hotkey") as mock_hotkey:
+        runner.run_loop({
+            "steps": [{"action": "hotkey", "keys": "ctrl+shift+s"}],
+        }, ds)
+        mock_hotkey.assert_called_once_with("ctrl", "shift", "s")
+
+
+def test_wait_text_with_string_region(mock_interrupt):
+    runner = make_runner(mock_interrupt)
+    ds = DataSource({})
+    with patch("engine.loop_runner.ocr.region_has_text", return_value=True) as mock_has_text:
+        runner.run_loop({
+            "steps": [{
+                "action": "wait_text",
+                "region": "100, 200, 300, 400",
+                "timeout": 5,
+                "min_chars": 1
+            }],
+        }, ds)
+        mock_has_text.assert_called_once_with((100, 200, 300, 400), 1)

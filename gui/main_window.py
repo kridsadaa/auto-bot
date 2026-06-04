@@ -34,7 +34,10 @@ class MainWindow(tk.Tk):
         self._config = self._load_config()
         self._mode = tk.StringVar(value="agent")
         self._status = tk.StringVar(value="พร้อมใช้งาน")
-        self._interrupt = InterruptHandler()
+        self._running = False
+        self._interrupt = InterruptHandler(
+            on_stop_hotkey=lambda: self.after(0, self._stop_from_hotkey)
+        )
         self._log_queue: queue.Queue = queue.Queue()
         self._monitor: ScreenMonitor = None
         self._bot_thread: threading.Thread = None
@@ -95,7 +98,7 @@ class MainWindow(tk.Tk):
         )
         self._btn_stop.pack(side="left", padx=4)
 
-        tk.Label(ctrl1, text="ESC = Pause  |  Mouse มุมซ้ายบน = Stop ทันที",
+        tk.Label(ctrl1, text="ESC = หยุดบอท (ทุกหน้าต่าง)  |  Mouse มุมซ้ายบน = หยุดทันที",
                  bg="#2d2d2d", fg="#6e6e6e", font=("Segoe UI", 8)).pack(side="left", padx=14)
 
         # --- แถว Run Loop โดยตรง (ไม่ต้องมี state/trigger) ---
@@ -145,6 +148,11 @@ class MainWindow(tk.Tk):
             ctrl2, text="Sequence Editor", width=16,
             bg="#569cd6", fg="white", font=("Segoe UI", 9, "bold"),
             command=self._open_sequence_editor,
+        ).pack(side="left", padx=4)
+
+        tk.Button(
+            ctrl2, text="🕒 Schedule", width=12,
+            command=self._open_schedule,
         ).pack(side="left", padx=4)
 
         # --- Status bar ---
@@ -314,7 +322,7 @@ class MainWindow(tk.Tk):
 
     def _on_state_detected(self, state_name: str, runner: LoopRunner, data_source: DataSource, loops: dict):
         self._queue_log(f"เจอ state: {state_name}", "ok")
-        self._status.set(f"State: {state_name}")
+        self.after(0, lambda: self._status.set(f"State: {state_name}"))
 
         state_cfg = next((s for s in self._config["states"] if s["name"] == state_name), None)
         if not state_cfg:
@@ -331,10 +339,10 @@ class MainWindow(tk.Tk):
             self._queue_log(f"Loop {loop_name} เสร็จสิ้น", "ok")
         except BotStoppedError:
             self._queue_log("Bot หยุดโดยผู้ใช้", "warn")
-            self._on_stop()
+            self.after(0, self._on_stop)
         except Exception as ex:
             self._queue_log(f"Error: {ex}", "error")
-            self._on_stop()
+            self.after(0, self._on_stop)
 
     def _start_copilot_mode(self, data_source: DataSource):
         self._status.set("Copilot Mode — รอ state ถัดไป...")
@@ -347,11 +355,21 @@ class MainWindow(tk.Tk):
         loops = self._config.get("loops", {})
 
         def on_state(name):
-            self._queue_log(f"เจอ state: {name} — รอการยืนยัน", "warn")
-            confirmed = messagebox.askyesno(
-                "Copilot", f"เจอ state: {name}\nเริ่ม loop หรือไม่?", parent=self,
-            )
-            if confirmed:
+            result = {"confirmed": False}
+            event = threading.Event()
+
+            def ask():
+                self._queue_log(f"เจอ state: {name} — รอการยืนยัน", "warn")
+                r = messagebox.askyesno(
+                    "Copilot", f"เจอ state: {name}\nเริ่ม loop หรือไม่?", parent=self,
+                )
+                result["confirmed"] = r
+                event.set()
+
+            self.after(0, ask)
+            event.wait()
+
+            if result["confirmed"]:
                 self._on_state_detected(name, runner, data_source, loops)
 
         self._monitor = ScreenMonitor(states=states, on_state_detected=on_state)
@@ -387,12 +405,18 @@ class MainWindow(tk.Tk):
     def _on_pause(self):
         if self._interrupt.is_paused():
             self._interrupt._paused = False
-            self._btn_pause.configure(text="Pause (ESC)")
+            self._btn_pause.configure(text="⏸  Pause")
             self._status.set("กำลังทำงาน...")
         else:
             self._interrupt._paused = True
-            self._btn_pause.configure(text="Resume (ESC)")
-            self._status.set("Paused — กด Resume หรือ ESC เพื่อทำต่อ")
+            self._btn_pause.configure(text="▶  Resume")
+            self._status.set("Paused — กด Resume เพื่อทำต่อ")
+
+    def _stop_from_hotkey(self):
+        """เรียกจาก InterruptHandler เมื่อกด ESC (รันบน main thread ผ่าน after)"""
+        if self._running:
+            self._queue_log("ESC — หยุดบอท", "warn")
+            self._on_stop()
 
     def _on_stop(self):
         self._interrupt.request_stop()
@@ -403,6 +427,7 @@ class MainWindow(tk.Tk):
         self._queue_log("Bot หยุดทำงาน", "warn")
 
     def _set_running_state(self, running: bool):
+        self._running = running
         self._btn_start.configure(state="disabled" if running else "normal")
         self._btn_run_loop.configure(state="disabled" if running else "normal")
         self._btn_pause.configure(state="normal" if running else "disabled")
@@ -419,6 +444,11 @@ class MainWindow(tk.Tk):
             f"Trigger image บันทึกที่:\n{path}\n\nเพิ่ม state ใน config/bot_config.yaml เพื่อใช้งาน",
             parent=self,
         )
+
+    def _open_schedule(self):
+        from gui.schedule_dialog import ScheduleDialog
+        self._config = self._load_config()
+        ScheduleDialog(self, list(self._config.get("loops", {}).keys()))
 
     def _open_sequence_editor(self):
         editor = SequenceEditor(self)

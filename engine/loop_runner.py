@@ -100,7 +100,15 @@ class LoopRunner:
             return found if until == "image_appears" else not found
         if until in ("text_filled", "text_empty"):
             region = step.get("region")
-            region = tuple(region) if region else None
+            if isinstance(region, str):
+                try:
+                    region = tuple(int(p.strip()) for p in region.split(",") if p.strip())
+                except ValueError:
+                    region = None
+            elif region:
+                region = tuple(region)
+            else:
+                region = None
             has = ocr.region_has_text(region, int(step.get("min_chars", 1)))
             return has if until == "text_filled" else not has
         raise ActionError(f"until ไม่รู้จัก: {until}")
@@ -158,6 +166,25 @@ class LoopRunner:
         self._on_log(f"switch_image: ไม่เข้า case ใด → default ({len(default_steps)} steps)")
         self._execute_steps(default_steps, data_source)
 
+    @staticmethod
+    def _selector(step: dict) -> dict:
+        """ดึง selector dict ของ UI element จาก step (เฉพาะ key ที่ไม่ว่าง)"""
+        keys = ("window", "auto_id", "name", "control_type", "class_name")
+        return {k: step[k] for k in keys if step.get(k)}
+
+    def _do_write_row(self, step: dict, data_source: DataSource):
+        """เขียนค่าที่ resolve แล้ว ต่อท้ายไฟล์ csv/xlsx (ไม่ผ่านการพิมพ์หน้าจอ)"""
+        from engine import file_writer
+        cols = step.get("columns", [])
+        if isinstance(cols, str):
+            cols = [c.strip() for c in cols.split(",")]
+        values = [data_source.resolve(c) for c in cols]
+        header = step.get("header")
+        if isinstance(header, str):
+            header = [h.strip() for h in header.split(",") if h.strip()]
+        self._on_log(f"write_row → {step.get('path')}: {values}")
+        file_writer.append_row(step["path"], values, header)
+
     def _do_stop_if_image(self, step: dict):
         if find_on_screen(step["target"], step.get("confidence", 0.85)) is not None:
             msg = step.get("message") or f"เจอรูปที่สั่งให้หยุด: {step['target']}"
@@ -199,7 +226,10 @@ class LoopRunner:
             elif action == "key":
                 actions.press_key(step["key"])
             elif action == "hotkey":
-                actions.hotkey(*step["keys"])
+                keys_val = step.get("keys", [])
+                if isinstance(keys_val, str):
+                    keys_val = [k.strip() for k in keys_val.split("+")]
+                actions.hotkey(*keys_val)
             elif action == "wait":
                 actions.wait(step.get("seconds", 1))
             elif action == "screenshot":
@@ -227,6 +257,25 @@ class LoopRunner:
                 self._do_if_image(step, data_source)
             elif action == "switch_image":
                 self._do_switch_image(step, data_source)
+            elif action == "write_row":
+                self._do_write_row(step, data_source)
+            elif action == "click_element":
+                actions.click_element(
+                    self._selector(step),
+                    timeout=step.get("timeout", 10),
+                    button=step.get("button", "left"),
+                )
+            elif action == "set_element_text":
+                actions.set_element_text(
+                    self._selector(step),
+                    data_source.resolve(step["text"]),
+                    timeout=step.get("timeout", 10),
+                )
+            elif action == "wait_element":
+                actions.wait_element(
+                    self._selector(step),
+                    timeout=step.get("timeout", 15),
+                )
             elif action == "stop_if_image":
                 self._do_stop_if_image(step)
             elif action == "skip_row":

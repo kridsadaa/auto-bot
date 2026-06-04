@@ -54,9 +54,22 @@ def read_text(region: tuple = None) -> str:
         )
     import pytesseract
 
-    img = pyautogui.screenshot(region=tuple(region) if region else None)
+    resolved_region = None
+    if region:
+        if isinstance(region, str):
+            try:
+                resolved_region = tuple(int(p.strip()) for p in region.split(",") if p.strip())
+            except ValueError:
+                resolved_region = None
+        else:
+            try:
+                resolved_region = tuple(int(x) for x in region)
+            except (ValueError, TypeError):
+                resolved_region = None
+
+    img = pyautogui.screenshot(region=resolved_region if resolved_region and len(resolved_region) == 4 else None)
     text = pytesseract.image_to_string(img).strip()
-    get_logger().info(f"OCR region={region} → {text!r}")
+    get_logger().info(f"OCR region={resolved_region} → {text!r}")
     return text
 
 

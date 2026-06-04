@@ -11,6 +11,8 @@ ACTION_TYPES = [
     "click_image", "type", "key", "hotkey", "wait", "screenshot", "scroll", "drag",
     "wait_image", "wait_text", "repeat_key_until", "stop_if_image",
     "skip_row_if_image", "skip_row", "if_image", "switch_image",
+    "write_row",
+    "click_element", "set_element_text", "wait_element",
 ]
 
 KEY_OPTIONS = ["enter", "tab", "escape", "f1", "f2", "f3", "f4", "f5", "f6",
@@ -70,6 +72,15 @@ def _step_label(step: dict) -> str:
     if action == "switch_image":
         return (f"switch_image   →   {len(step.get('cases', []))} cases "
                 f"(+default {len(step.get('default', []))})")
+    if action == "write_row":
+        cols = step.get("columns", [])
+        n = len(cols) if isinstance(cols, list) else len(str(cols).split(","))
+        return f"write_row      →   {os.path.basename(str(step.get('path', '?')))}  ({n} cols)"
+    if action in ("click_element", "set_element_text", "wait_element"):
+        who = step.get("name") or step.get("auto_id") or step.get("control_type") or "?"
+        if action == "set_element_text":
+            return f"set_element_text → {who} = {step.get('text', '')}"
+        return f"{action}  →   {who}"
     return action
 
 
@@ -388,6 +399,102 @@ class StepDialog(tk.Toplevel):
             NestedStepsEditor(self._fields_frame, self._default,
                               "DEFAULT — ทำเมื่อไม่เข้า case ใด:", height=3).pack(fill="both", expand=True, pady=(8, 2))
 
+        elif action == "write_row":
+            row = tk.Frame(self._fields_frame)
+            row.pack(fill="x", pady=2)
+            tk.Label(row, text="ไฟล์ปลายทาง:", width=18, anchor="w").pack(side="left")
+            pvar = tk.StringVar(value=self._step.get("path", ""))
+            tk.Entry(row, textvariable=pvar, width=28).pack(side="left", padx=4)
+            tk.Button(row, text="Browse", command=lambda: self._browse_save(pvar)).pack(side="left", padx=2)
+            self._fields["path"] = pvar
+            self._add_field("columns", "คอลัมน์ (คั่น ,):", default=self._list_default("columns"))
+            tk.Label(self._fields_frame,
+                     text="  ค่าที่จะเขียนต่อท้ายไฟล์ เช่น {csv.MATERIAL_CODE},{csv.QTY},{TODAY}",
+                     fg="gray", font=("Segoe UI", 8)).pack(anchor="w")
+            self._add_field("header", "หัวคอลัมน์ (ออปชัน):", default=self._list_default("header"))
+            tk.Label(self._fields_frame,
+                     text="  เขียนเป็นแถวแรกถ้าไฟล์ยังว่าง เช่น MATERIAL_CODE,QTY,DATE",
+                     fg="gray", font=("Segoe UI", 8)).pack(anchor="w")
+
+        elif action in ("click_element", "set_element_text", "wait_element"):
+            if action == "set_element_text":
+                self._add_field("text", "Text / Variable:", default=self._step.get("text", ""))
+            self._add_element_fields()
+
+    def _add_element_fields(self):
+        tk.Label(self._fields_frame,
+                 text="  เล็ง element ด้วย UI Automation — กรอกเท่าที่จำเป็น (ว่าง = ไม่ใช้เกณฑ์นั้น)",
+                 fg="gray", font=("Segoe UI", 8)).pack(anchor="w")
+        self._add_field("window", "Window (regex):", default=self._step.get("window", ""))
+        self._add_field("auto_id", "AutomationId:", default=self._step.get("auto_id", ""))
+        self._add_field("name", "Name:", default=self._step.get("name", ""))
+        self._add_field("control_type", "Control type:", default=self._step.get("control_type", ""))
+        self._add_field("class_name", "Class name:", default=self._step.get("class_name", ""))
+        self._add_field("timeout", "Timeout (s):", default=str(self._step.get("timeout", 10)))
+        row = tk.Frame(self._fields_frame)
+        row.pack(fill="x", pady=4)
+        tk.Button(row, text="🔍 จิ้ม element", bg="#dcdcaa",
+                  command=self._inspect_element).pack(side="left", padx=4)
+        tk.Label(row, text="กดแล้วเอาเมาส์ชี้ element เป้าหมาย (มีนับถอยหลัง)",
+                 fg="gray", font=("Segoe UI", 8)).pack(side="left", padx=4)
+
+    def _inspect_element(self):
+        self.withdraw()
+
+        def do():
+            try:
+                import win32api
+                from engine import ui_element
+                x, y = win32api.GetCursorPos()
+                props = ui_element.element_from_point(x, y)
+            except Exception as e:
+                self._deiconify_focus()
+                messagebox.showwarning("Inspect", f"อ่าน element ไม่ได้: {e}", parent=self)
+                return
+            for key in ("window", "auto_id", "name", "control_type", "class_name"):
+                if key in self._fields and props.get(key):
+                    self._fields[key].set(str(props[key]))
+            self._deiconify_focus()
+
+        self._countdown_then(3, do)
+
+    def _countdown_then(self, secs: int, fn):
+        tip = tk.Toplevel(self.master)
+        tip.attributes("-topmost", True)
+        tip.overrideredirect(True)
+        lbl = tk.Label(tip, text="", bg="#222", fg="white",
+                       font=("Segoe UI", 14, "bold"), padx=20, pady=10)
+        lbl.pack()
+        sw = tip.winfo_screenwidth()
+        tip.geometry(f"+{sw // 2 - 120}+40")
+
+        def tick(n):
+            if n <= 0:
+                tip.destroy()
+                fn()
+                return
+            lbl.configure(text=f"เอาเมาส์ชี้ element… {n}")
+            tip.after(1000, lambda: tick(n - 1))
+
+        tick(secs)
+
+    def _deiconify_focus(self):
+        self.deiconify()
+        self.lift()
+        self.focus_force()
+
+    def _list_default(self, key: str) -> str:
+        v = self._step.get(key, [])
+        return ",".join(v) if isinstance(v, list) else str(v)
+
+    def _browse_save(self, var: tk.StringVar):
+        path = filedialog.asksaveasfilename(
+            title="ไฟล์ปลายทาง", initialdir="data", defaultextension=".csv",
+            filetypes=[("CSV", "*.csv"), ("Excel", "*.xlsx"), ("All", "*.*")],
+        )
+        if path:
+            var.set(os.path.relpath(path))
+
     def _build_cases_editor(self):
         """ตัวจัดการ list ของ case (แต่ละ case = target + steps) สำหรับ switch_image"""
         wrap = tk.LabelFrame(self._fields_frame, text="Cases (ตามลำดับความสำคัญ)",
@@ -606,6 +713,8 @@ class StepDialog(tk.Toplevel):
                     step[key] = val
             elif key == "keys":
                 step[key] = [k.strip() for k in val.split("+")]
+            elif key in ("columns", "header"):
+                step[key] = [p.strip() for p in val.split(",") if p.strip()]
             else:
                 step[key] = val
 
@@ -1233,6 +1342,8 @@ class SequenceEditor(tk.Toplevel):
         tk.Button(ctrl, text="↑", width=4, command=self._move_up).pack(side="left", padx=2)
         tk.Button(ctrl, text="↓", width=4, command=self._move_down).pack(side="left", padx=2)
         tk.Button(ctrl, text="Del", width=6, fg="red", command=self._delete_step).pack(side="left", padx=4)
+        tk.Button(ctrl, text="⏺ Record", width=10, bg="#a00000", fg="white",
+                  command=self._record_steps).pack(side="right", padx=4)
 
         # Save
         save_bar = tk.Frame(right, bg="#007acc", pady=4)
@@ -1315,6 +1426,30 @@ class SequenceEditor(tk.Toplevel):
         # StatesDialog แก้ config['states'] ใน place (ใช้รายชื่อ loop ปัจจุบัน)
         dlg = StatesDialog(self, self._config)
         self.wait_window(dlg)
+
+    def _record_steps(self):
+        if not self._selected_loop:
+            messagebox.showwarning("", "เลือก loop ก่อน")
+            return
+        if not messagebox.askyesno(
+            "Record",
+            "เริ่มอัด? หลังกดตกลง รออีก 2 วิ แล้วคลิก/พิมพ์ตามต้องการ\nกด F10 เพื่อหยุดอัด",
+            parent=self,
+        ):
+            return
+        from gui.recorder import Recorder
+        self._recorder = Recorder(
+            self, on_done=lambda steps: self._apply_recorded(steps)
+        )
+        # หน่วงก่อนเริ่ม เพื่อไม่อัดคลิกปุ่มตกลง
+        self.after(2000, self._recorder.start)
+
+    def _apply_recorded(self, steps: list):
+        if not self._selected_loop:
+            return
+        self._steps().extend(steps)
+        self._refresh_steps()
+        messagebox.showinfo("Record", f"เพิ่ม {len(steps)} step จากการอัด", parent=self)
 
     # ─── Step management ────────────────────────────────────────────────────
 

@@ -10,7 +10,11 @@ Visual automation bot สำหรับทำงานซ้ำๆ บน SAP, 
 - **Data Source** — รองรับค่า static, วันที่อัตโนมัติ และ loop ข้อมูลจาก CSV ทีละแถว
 - **Error Dialog** — เมื่อหา image ไม่เจอ bot หยุดและแสดงรูปเปรียบเทียบให้ capture ใหม่ได้ทันที
 - **สองโหมด** — Copilot (ยืนยันก่อนทำ) และ Agent (อัตโนมัติเต็ม)
-- **Interrupt** — กด ESC เพื่อ pause, ขยับ mouse ไปมุมซ้ายบนเพื่อหยุดทันที
+- **UI Automation** — เล็ง element ด้วย UIA selector (pywinauto) แทนรูปภาพ ทนต่อ resolution/theme/zoom (`click_element`, `set_element_text`, `wait_element`) + ปุ่ม "จิ้ม element" หา selector ให้
+- **File I/O** — อ่าน `.xlsx`/`.csv` เป็น data source และเขียนผลลง `.xlsx`/`.csv` โดยตรง (`write_row`) ไม่ต้องพิมพ์ผ่านหน้าจอ
+- **Recorder** — อัดการคลิก/พิมพ์เป็น step อัตโนมัติ (กด F10 หยุด)
+- **Scheduling** — ตั้งเวลารัน loop ผ่าน Windows Task Scheduler + โหมด CLI `--run-loop`
+- **Interrupt** — กด ESC (ได้จากทุกหน้าต่าง) เพื่อหยุดบอท, ขยับ mouse ไปมุมซ้ายบนเพื่อหยุดทันที, pause/resume ใช้ปุ่มใน GUI
 
 ## รองรับ
 
@@ -69,7 +73,7 @@ auto-bot/
 │   ├── loop_runner.py       # execute YAML sequences
 │   ├── screen_monitor.py    # background state detection
 │   ├── ocr.py               # Tesseract OCR (wait_text / repeat_key_until)
-│   └── interrupt_handler.py # ESC pause / failsafe stop
+│   └── interrupt_handler.py # ESC stop (global) / failsafe stop
 └── gui/
     ├── main_window.py       # control panel
     ├── sequence_editor.py   # visual loop builder
@@ -214,6 +218,34 @@ loops:
       - ...
 ```
 
+#### 5. File I/O (อ่าน/เขียนไฟล์ตรง ไม่ผ่านหน้าจอ)
+*   **data source** รองรับทั้ง `.csv` และ `.xlsx` — ตั้ง `data_source: data/source.xlsx` แล้ววนทีละแถวเหมือน CSV
+*   **`write_row`** — เขียน/ต่อแถวลงไฟล์ปลายทางโดยตรง (เร็วและแม่นกว่าพิมพ์ลงสเปรดชีต)
+    *   `path`: ไฟล์ปลายทาง `.csv` หรือ `.xlsx`
+    *   `columns`: ลิสต์ค่าที่จะเขียน รองรับตัวแปร เช่น `["{csv.MATERIAL_CODE}", "{csv.QTY}", "{TODAY}"]`
+    *   `header` (ออปชัน): หัวคอลัมน์ เขียนเป็นแถวแรกถ้าไฟล์ยังว่าง
+    *   เคส "CSV A → CSV B": `data_source: source_a.csv` + `write_row` ลง `target_b.csv` ทำได้แบบไม่แตะหน้าจอเลย
+
+#### 6. UI Automation (เล็ง element แทนรูปภาพ — ทนกว่า)
+ใช้ UIA selector (pywinauto) แทน image matching — ไม่เพี้ยนเมื่อเปลี่ยน resolution/theme/zoom กรอกเกณฑ์เท่าที่จำเป็น (`window` regex, `auto_id`, `name`, `control_type`, `class_name`) หรือกดปุ่ม **"🔍 จิ้ม element"** ใน editor ให้หา selector อัตโนมัติ
+*   **`click_element`** — คลิก element (`button` = left/right, `timeout`)
+*   **`set_element_text`** — ใส่ข้อความลง element โดยตรง (เร็ว/ชัวร์กับช่อง Edit) `text` รองรับตัวแปร/`{csv.X}`
+*   **`wait_element`** — รอจน element ปรากฏ(พร้อมใช้งาน) ภายใน `timeout`
+
+---
+
+## CLI / Scheduling
+
+รัน loop แบบไม่มี GUI (สำหรับตั้งเวลา):
+```
+python main.py --run-loop <ชื่อ loop> [--config config/bot_config.yaml]
+```
+ตั้งเวลาผ่านปุ่ม **🕒 Schedule** ในหน้าหลัก → สร้าง task ใน Windows Task Scheduler (ชื่อขึ้นต้น `AutoBot_`) รัน daily/once ได้ และลบ task เดิมได้จาก dialog เดียวกัน
+
+## Recorder
+
+ใน Sequence Editor กดปุ่ม **⏺ Record** → คลิก/พิมพ์ตามต้องการ → กด **F10** เพื่อหยุด ระบบจะแปลงเป็น step (`click` พิกัด, `type`, `key`) แล้วต่อท้าย loop ที่เลือก (v1 บันทึกเป็นพิกัดหน้าจอ)
+
 ---
 
 ## Use Cases และแนวทางการใช้งานจริง
@@ -258,9 +290,10 @@ loops:
 
 | วิธี | ผล |
 |------|----|
-| กด `ESC` | Pause / Resume |
-| ขยับ mouse ไปมุมซ้ายบน | Stop ทันที |
-| กดปุ่ม Stop | Stop |
+| กด `ESC` (ทุกหน้าต่าง) | **หยุดบอท** (panic stop) |
+| ขยับ mouse ไปมุมซ้ายบน | Stop ทันที (failsafe) |
+| ปุ่ม Pause / Resume ใน GUI | พัก / ทำต่อ |
+| ปุ่ม Stop ใน GUI | Stop |
 
 ## SAP GUI Scripting
 

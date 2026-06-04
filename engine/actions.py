@@ -180,3 +180,32 @@ def take_screenshot(save_path: str = None) -> Image.Image:
 def scroll(x: int, y: int, clicks: int):
     _log(f"Scroll {clicks} at ({x},{y})")
     pyautogui.scroll(clicks, x=x, y=y)
+
+
+# ─── UI Automation (element-based — ทนกว่ารูปภาพ) ─────────────────────────────
+
+@_safe
+def click_element(selector: dict, timeout: float = 10, button: str = "left"):
+    from engine import ui_element
+    _log(f"Click element: {selector}")
+    el = ui_element.find_element(selector, timeout)
+    el.click_input(button=button)
+
+
+@_safe
+def set_element_text(selector: dict, text: str, timeout: float = 10):
+    from engine import ui_element
+    _log(f"Set element text: {selector} = {repr(text)}")
+    el = ui_element.find_element(selector, timeout)
+    try:
+        el.set_edit_text(text)  # เร็ว/ชัวร์สำหรับ Edit control
+    except Exception:
+        el.click_input()        # fallback: โฟกัสแล้วพิมพ์
+        type_text(text)
+
+
+@_safe
+def wait_element(selector: dict, timeout: float = 15):
+    from engine import ui_element
+    _log(f"Wait element: {selector} (timeout {timeout}s)")
+    ui_element.find_element(selector, timeout)

@@ -19,14 +19,25 @@ class DataSource:
         self._csv_index = 0
 
         if csv_path:
-            try:
-                df = pd.read_csv(csv_path, dtype=str)
-                self._csv_rows = df.fillna("").to_dict(orient="records")
-                get_logger().info(f"Loaded CSV: {csv_path} ({len(self._csv_rows)} rows)")
-            except FileNotFoundError:
-                raise DataSourceError(f"CSV file not found: {csv_path}")
-            except Exception as e:
-                raise DataSourceError(f"Failed to read CSV '{csv_path}': {e}") from e
+            self._csv_rows = self._load_rows(csv_path)
+
+    @staticmethod
+    def _load_rows(path: str) -> list[dict]:
+        """อ่านข้อมูลตาราง — รองรับ .csv และ .xlsx/.xls (ทุกค่าเป็น string)"""
+        import os
+        ext = os.path.splitext(path)[1].lower()
+        try:
+            if ext in (".xlsx", ".xls", ".xlsm"):
+                df = pd.read_excel(path, dtype=str)
+            else:
+                df = pd.read_csv(path, dtype=str)
+            rows = df.fillna("").to_dict(orient="records")
+            get_logger().info(f"Loaded data: {path} ({len(rows)} rows)")
+            return rows
+        except FileNotFoundError:
+            raise DataSourceError(f"Data file not found: {path}")
+        except Exception as e:
+            raise DataSourceError(f"Failed to read '{path}': {e}") from e
 
     def set_runtime(self, key: str, value: str):
         self._static[key] = value
