@@ -1,5 +1,6 @@
 import queue
 import threading
+import time
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
 import yaml
@@ -16,6 +17,9 @@ from gui.sequence_editor import SequenceEditor
 
 
 CONFIG_PATH = "config/bot_config.yaml"
+
+# วินาทีนับถอยหลังก่อนเริ่ม "Run Loop นี้" — ให้ผู้ใช้ทันคลิกหน้าต่างปลายทาง
+START_COUNTDOWN = 3
 
 
 class MainWindow(tk.Tk):
@@ -245,6 +249,13 @@ class MainWindow(tk.Tk):
 
         def run():
             try:
+                # นับถอยหลังให้ผู้ใช้คลิกหน้าต่างปลายทาง (เช่น Excel/ฟอร์ม) ก่อน bot เริ่มพิมพ์
+                # ป้องกันเคส keystroke ยิงเข้า Auto Bot เองเพราะ focus ยังไม่ได้ย้าย
+                for i in range(START_COUNTDOWN, 0, -1):
+                    if self._interrupt.is_stopped():
+                        return
+                    self._queue_log(f"เริ่มใน {i}... → คลิกหน้าต่าง/ช่องปลายทางตอนนี้", "warn")
+                    time.sleep(1)
                 runner.run_loop(loop_cfg, data_source)
                 self._queue_log(f"Loop {loop_name} เสร็จสิ้น", "ok")
             except BotStoppedError:
