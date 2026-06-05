@@ -28,3 +28,6 @@ screenshots/
 # PyInstaller / Build
 build/
 dist/
+
+# Internal concept/analysis notes (เก็บเฉพาะเครื่อง ไม่ขึ้น repo สาธารณะ)
+concepts/

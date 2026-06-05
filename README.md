@@ -1,6 +1,13 @@
 # Auto Bot
 
+[![CI](https://github.com/kridsadaa/auto-bot/actions/workflows/ci.yml/badge.svg)](https://github.com/kridsadaa/auto-bot/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+🇹🇭 ภาษาไทย (ไฟล์นี้) · 🇬🇧 [English](README.en.md)
+
 Visual automation bot สำหรับทำงานซ้ำๆ บน SAP, web browser และ desktop app โดยใช้ image matching เป็น trigger ตัดสินใจการทำงาน
+
+> **Open source (MIT)** — ทำงาน 100% ในเครื่อง ข้อมูลไม่ออกสู่คลาวด์ เปิดโค้ดให้ IT/Basis ตรวจสอบได้ เหมาะกับงาน SAP ที่ห่วงเรื่องความลับข้อมูล
 
 ## Features
 
@@ -20,18 +27,39 @@ Visual automation bot สำหรับทำงานซ้ำๆ บน SAP, 
 
 | ประเภท | วิธี |
 |--------|------|
-| SAP Logon | SAP GUI Scripting (win32com) + image matching |
-| Web browser | Playwright |
-| Desktop app ทั่วไป | PyAutoGUI + image matching |
+| SAP GUI | Image matching + UI Automation (pywinauto) + จำลองคีย์บอร์ด/เมาส์ |
+| Web browser | PyAutoGUI + image matching (Playwright bundled ไว้สำหรับงานเว็บในอนาคต) |
+| Desktop app ทั่วไป | PyAutoGUI + image matching / UI Automation |
+
+> **หมายเหตุ:** ปัจจุบันบอททำงานกับ SAP แบบ "มองจากหน้าจอ" (image + UIA) ซึ่งใช้ได้กับ **ทุกโปรแกรมบนจอ** — ยังไม่ได้ใช้ SAP GUI Scripting API โดยตรง (ดู [Roadmap](#roadmap))
 
 ## ติดตั้ง
 
-```bash
-pip install -r requirements.txt
-playwright install chromium
+**วิธีง่ายสุด (แนะนำ)** — สคริปต์เดียวจบ: สร้าง `.venv`, ติดตั้ง dependencies, Chromium และ Tesseract-OCR ให้อัตโนมัติ
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\setup.ps1
 ```
 
-> **Windows เท่านั้น** — SAP GUI Scripting และ pywin32 รองรับเฉพาะ Windows
+<details>
+<summary>หรือติดตั้งเอง (manual)</summary>
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+playwright install chromium          # เฉพาะถ้าจะใช้งานเว็บ
+```
+
+**OCR (ฟีเจอร์ `wait_text` / `repeat_key_until` แบบ text)** ต้องมี Tesseract engine แยก:
+ติดตั้งจาก [UB-Mannheim/tesseract](https://github.com/UB-Mannheim/tesseract/wiki) แล้วตั้ง env var
+`TESSERACT_CMD` ชี้ไปที่ `tesseract.exe` ถ้ามันไม่อยู่ใน PATH
+
+</details>
+
+> **Windows เท่านั้น** — `pywin32` และ `pywinauto` รองรับเฉพาะ Windows
+>
+> 💡 แนะนำให้ใช้ **virtual environment (.venv)** เสมอ — เลี่ยงปัญหาสิทธิ์การเขียนลง system Python (`Access is denied`) ที่ต้องไปใช้ `pip install --user`
 
 ## ตั้งค่าเริ่มต้น
 
@@ -307,7 +335,19 @@ python main.py --run-loop <ชื่อ loop> [--config config/bot_config.yaml]
 | ปุ่ม Pause / Resume ใน GUI | พัก / ทำต่อ |
 | ปุ่ม Stop ใน GUI | Stop |
 
-## SAP GUI Scripting
+## Roadmap
 
-ต้องเปิดใน SAP Logon ก่อน:
-> Options → Accessibility & Scripting → Scripting → **Enable scripting**
+- [ ] **SAP GUI Scripting backend** — เพิ่ม action `sap_set_field` / `sap_press` / `sap_read_status` ที่คุยกับ SAP ผ่าน Scripting API (`win32com` → `GetScriptingEngine`) โดยตรง: แม่นกว่า image matching, ดึงเลข order จาก status bar ได้ตรงๆ ไม่ต้อง OCR. recorder จะจับ element ID ให้อัตโนมัติเพื่อรักษาความง่ายต่อผู้ใช้ (ผู้ใช้ไม่ต้องรู้ ID)
+  > ต้องเปิดที่ฝั่ง SAP ก่อน: Options → Accessibility & Scripting → Scripting → **Enable scripting** (Basis อาจปิดไว้ด้วยเหตุผล security)
+- [ ] **AI self-healing** — เมื่อหาภาพไม่เจอ ให้ AI vision หา element ที่ใกล้เคียงแทน (ดู `concepts/design_philosophy_and_ai.md`)
+- [ ] Web automation จริงผ่าน Playwright (ตอนนี้ bundle ไว้แต่ยังไม่ wire กับ engine)
+
+---
+
+## Contributing
+
+ยินดีรับ contribution! อ่าน [CONTRIBUTING.md](CONTRIBUTING.md) — ตั้ง dev env ด้วย `scripts\setup.ps1` แล้ว `pytest -q`
+
+## License
+
+[MIT](LICENSE) © 2026 kridsadaa
