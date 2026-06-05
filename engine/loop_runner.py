@@ -48,8 +48,23 @@ class LoopRunner:
         # นโยบายเมื่อ "แถว" ทำงานพลาด: "stop" (default) = หยุดทั้งงาน, "skip" = ข้ามไปแถวถัดไป
         on_row_error = str(loop_config.get("on_row_error", "stop")).lower()
 
+        # ตัวแปรเฉพาะ loop (loop-scoped) — override global เฉพาะตัวที่ "มีค่า"
+        # ค่าว่าง (เช่น loop ที่เพิ่ง import มายังไม่กรอก) จะ fall through ไปใช้ค่า global เดิม
+        # ไม่ไปลบค่า global ทิ้ง; ถ้า global ก็ไม่มี → ตั้งเป็นค่าว่างให้ resolve ได้ (ไม่ค้าง {NAME})
+        loop_vars = loop_config.get("variables") or {}
+        base_static = dict(data_source._static)
+        for k, v in loop_vars.items():
+            if v not in (None, ""):
+                base_static[k] = v
+            else:
+                base_static.setdefault(k, "")
+        if loop_vars:
+            overridden = [k for k, v in loop_vars.items() if v not in (None, "")]
+            if overridden:
+                get_logger().info(f"Loop variables override global: {overridden}")
+
         if csv_path:
-            ds = DataSource(data_source._static, csv_path)
+            ds = DataSource(base_static, csv_path)
             row_num = 0
             while ds.has_next_row():
                 row_num += 1
@@ -70,8 +85,10 @@ class LoopRunner:
                     raise  # on_row_error=stop → หยุดทั้งงาน
                 # BotStoppedError (ผู้ใช้/stop_if_image/error_guard) ไม่ถูกจับ → หยุดทั้งงานเสมอ
         else:
+            # ใช้ data_source เดิมถ้าไม่มี loop var (รักษา runtime values); ถ้ามีก็สร้างใหม่ที่ merge แล้ว
+            ds = DataSource(base_static) if loop_vars else data_source
             try:
-                self._execute_steps(steps, data_source)
+                self._execute_steps(steps, ds)
             except SkipRowSignal as e:
                 # ไม่มี CSV ให้ข้ามไป — จบ loop อย่างสุภาพ
                 self._on_log(f"skip_row ถูกเรียกแต่ไม่มี CSV — จบ loop: {e}")

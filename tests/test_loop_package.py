@@ -52,6 +52,21 @@ def test_build_package_blanks_vars_and_bundles_images(tmp_path, monkeypatch):
     assert summary["missing"] == []
 
 
+def test_build_package_blanks_loop_scoped_variable_values(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _png("elements/a.png")
+    config = {"variables": {}, "states": [], "loops": {"L": {
+        "variables": {"COMPANY_CODE": "2000", "TOKEN": "secret"},  # ค่า sensitive เฉพาะ loop
+        "steps": [{"action": "click_image", "target": "elements/a.png"}],
+    }}}
+    build_package(config, "L", "L.botpack")
+    with zipfile.ZipFile("L.botpack") as zf:
+        man = yaml.safe_load(zf.read("manifest.yaml"))
+    # ค่าถูกล้างเป็นว่าง แต่ "ชื่อ" ยังอยู่ (ทั้งใน loop และ summary)
+    assert man["loop"]["variables"] == {"COMPANY_CODE": "", "TOKEN": ""}
+    assert man["variables"]["COMPANY_CODE"] == "" and man["variables"]["TOKEN"] == ""
+
+
 def test_build_package_reports_missing_image(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     config = {"variables": {}, "states": [], "loops": {"L": {"steps": [

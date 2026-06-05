@@ -30,6 +30,48 @@ def test_type_step_calls_type_text(mock_interrupt):
         mock_type.assert_called_once_with("hello", method="paste", clear=False)
 
 
+def test_loop_scoped_variable_overrides_global(mock_interrupt):
+    runner = make_runner(mock_interrupt)
+    ds = DataSource({"NAME": "global"})
+
+    with patch("engine.actions.type_text") as mock_type:
+        runner.run_loop(
+            {"variables": {"NAME": "loopval"},
+             "steps": [{"action": "type", "text": "{NAME}"}]},
+            ds,
+        )
+        mock_type.assert_called_once_with("loopval", method="paste", clear=False)
+    # ตัวแปร global เดิมไม่ถูกแก้ (loop var แค่ override เฉพาะตอนรัน loop นี้)
+    assert ds._static["NAME"] == "global"
+
+
+def test_loop_scoped_variable_without_global(mock_interrupt):
+    runner = make_runner(mock_interrupt)
+    ds = DataSource({})
+
+    with patch("engine.actions.type_text") as mock_type:
+        runner.run_loop(
+            {"variables": {"CITY": "BKK"},
+             "steps": [{"action": "type", "text": "{CITY}"}]},
+            ds,
+        )
+        mock_type.assert_called_once_with("BKK", method="paste", clear=False)
+
+
+def test_empty_loop_variable_falls_through_to_global(mock_interrupt):
+    # loop var ค่าว่าง (เช่นเพิ่ง import ยังไม่กรอก) ต้องไม่ลบค่า global ทิ้ง
+    runner = make_runner(mock_interrupt)
+    ds = DataSource({"NAME": "global"})
+
+    with patch("engine.actions.type_text") as mock_type:
+        runner.run_loop(
+            {"variables": {"NAME": ""},
+             "steps": [{"action": "type", "text": "{NAME}"}]},
+            ds,
+        )
+        mock_type.assert_called_once_with("global", method="paste", clear=False)
+
+
 def test_type_step_passes_method(mock_interrupt):
     runner = make_runner(mock_interrupt)
     ds = DataSource({"NAME": "hello"})

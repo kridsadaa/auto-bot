@@ -70,9 +70,13 @@ def build_package(config: dict, loop_name: str, out_path: str, include_data: boo
     loop_cfg = copy.deepcopy(loops[loop_name])
     states = [copy.deepcopy(s) for s in config.get("states", []) if s.get("loop") == loop_name]
 
-    # ตัวแปรที่ใช้ → ค่าว่างเสมอ (ความปลอดภัย)
+    # ตัวแปรที่ใช้ → ค่าว่างเสมอ (ความปลอดภัย); รวมชื่อตัวแปรเฉพาะ loop ด้วย
     var_names = _collect_var_names(loop_cfg.get("steps", []))
+    var_names |= set(loop_cfg.get("variables", {}) or {})
     variables = {name: "" for name in sorted(var_names)}
+    # ล้างค่า loop-scoped variables เป็นว่าง (เก็บแค่ "ชื่อ" — กันค่า sensitive หลุดเหมือน global)
+    if isinstance(loop_cfg.get("variables"), dict):
+        loop_cfg["variables"] = {k: "" for k in loop_cfg["variables"]}
 
     # รวม path รูปทั้งหมด (loop targets + state triggers + data_source ถ้าแนบ)
     src_paths: list = []

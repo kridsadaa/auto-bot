@@ -144,12 +144,25 @@ loops:
 
   loop_po_entry:
     data_source: "data/tasks.csv"   # loop ทีละ row
+    variables:                       # ตัวแปรเฉพาะ loop นี้ (ทับ global ที่ชื่อชนกัน)
+      COMPANY_CODE: "2000"           # loop นี้ใช้ 2000 แม้ global = 1000
     steps:
       - action: type
         text: "{TODAY}"             # วันที่วันนี้ DD.MM.YYYY
       - action: type
         text: "{csv.MATERIAL_CODE}" # column จาก CSV
 ```
+
+### ขอบเขตตัวแปร (Variable Scope)
+
+ตัวแปรมี 2 ระดับ — เวลา resolve `{ชื่อตัวแปร}` ระบบจะใช้ตัวแปรเฉพาะ loop ก่อน ถ้าไม่มีจึงใช้ global:
+
+| ระดับ | ที่เก็บใน config | ขอบเขต | แก้ผ่าน GUI |
+|-------|-----------------|--------|-------------|
+| 🌐 **Global** | `variables:` ระดับบนสุด | ทุก loop | ปุ่ม **🌐 ตัวแปร Global** |
+| 📍 **Loop** | `loops.<ชื่อ>.variables:` | เฉพาะ loop นั้น (ทับ global ที่ชื่อเดียวกัน) | ปุ่ม **📍 ตัวแปร Loop นี้** |
+
+ในช่อง `type` มี dropdown ให้เลือกแทรกตัวแปรได้เลย (🌐 = global/built-in, 📍 = loop นี้) — ไม่ต้องพิมพ์ปีกกาเอง
 
 ### Actions ที่รองรับ
 

@@ -118,12 +118,25 @@ loops:
 
   loop_po_entry:
     data_source: "data/tasks.csv"   # iterate row by row
+    variables:                       # loop-scoped vars (override global of same name)
+      COMPANY_CODE: "2000"           # this loop uses 2000 even if global is 1000
     steps:
       - action: type
         text: "{TODAY}"             # today's date, DD.MM.YYYY
       - action: type
         text: "{csv.MATERIAL_CODE}" # a CSV column
 ```
+
+### Variable scope
+
+Variables come in two levels. When resolving `{name}`, loop-scoped variables win over global:
+
+| Level | Stored in config | Scope | Edit in GUI |
+|-------|------------------|-------|-------------|
+| 🌐 **Global** | top-level `variables:` | all loops | **🌐 ตัวแปร Global** button |
+| 📍 **Loop** | `loops.<name>.variables:` | that loop only (overrides same-named global) | **📍 ตัวแปร Loop นี้** button |
+
+The `type` action editor has a dropdown to insert variables (🌐 = global/built-in, 📍 = this loop) so you never type the braces by hand.
 
 ### Actions overview
 

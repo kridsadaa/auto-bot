@@ -618,12 +618,14 @@ class StepDialog(tk.Toplevel):
         tk.Label(row, text="ตัวแปร:", width=18, anchor="w").pack(side="left")
         var_sel = tk.StringVar(value=self._variables[0])
         ttk.Combobox(row, textvariable=var_sel, values=self._variables,
-                     state="readonly", width=20).pack(side="left", padx=4)
+                     state="readonly", width=22).pack(side="left", padx=4)
         tk.Button(row, text="+ ใส่ {VAR}",
                   command=lambda: self._insert_var(var_sel.get())).pack(side="left", padx=4)
 
-    def _insert_var(self, name: str):
+    def _insert_var(self, display: str):
+        # display อาจมีสัญลักษณ์ scope นำหน้า (🌐/📍) — เอาเฉพาะชื่อตัวแปรตัวสุดท้าย
         var = self._fields.get("text")
+        name = display.split()[-1] if display else ""
         if name and var is not None:
             var.set(var.get() + f"{{{name}}}")
 
@@ -1067,11 +1069,13 @@ class LoopSettingsDialog(tk.Toplevel):
 class VariablesDialog(tk.Toplevel):
     """แก้ไข config['variables'] — key/value; value ว่าง = bot ถามตอน Start"""
 
-    def __init__(self, parent, variables: dict):
+    def __init__(self, parent, variables: dict, title: str = "ตัวแปร (Variables)",
+                 hint: str = "ใช้ใน step ผ่าน {ชื่อตัวแปร}  •  value ว่าง = bot ถามตอน Start"):
         super().__init__(parent)
-        self.title("ตัวแปร (Variables)")
+        self.title(title)
         self.grab_set()
         self._result = None
+        self._hint = hint
         self._rows = []  # (key_var, val_var, row_frame)
         self._build()
         for k, v in (variables or {}).items():
@@ -1081,7 +1085,7 @@ class VariablesDialog(tk.Toplevel):
         self._center()
 
     def _build(self):
-        tk.Label(self, text="ใช้ใน step ผ่าน {ชื่อตัวแปร}  •  value ว่าง = bot ถามตอน Start",
+        tk.Label(self, text=self._hint,
                  fg="#0e639c", font=("Segoe UI", 9)).pack(padx=10, pady=(10, 4), anchor="w")
         hdr = tk.Frame(self)
         hdr.pack(fill="x", padx=10)
@@ -1364,7 +1368,8 @@ class SequenceEditor(tk.Toplevel):
         tk.Button(btn_left, text="ลบ Loop", fg="red", command=self._delete_loop).pack(fill="x", pady=2)
 
         tk.Frame(btn_left, height=1, bg="#3a3a3a").pack(fill="x", pady=6)
-        tk.Button(btn_left, text="🔧 ตัวแปร", command=self._edit_variables).pack(fill="x", pady=2)
+        tk.Button(btn_left, text="🌐 ตัวแปร Global", command=self._edit_variables).pack(fill="x", pady=2)
+        tk.Button(btn_left, text="📍 ตัวแปร Loop นี้", command=self._edit_loop_variables).pack(fill="x", pady=2)
         tk.Button(btn_left, text="🖥 States", command=self._edit_states).pack(fill="x", pady=2)
 
         tk.Frame(btn_left, height=1, bg="#3a3a3a").pack(fill="x", pady=6)
@@ -1515,6 +1520,25 @@ class SequenceEditor(tk.Toplevel):
         if dlg.get_result() is not None:
             self._config["variables"] = dlg.get_result()
 
+    def _edit_loop_variables(self):
+        """แก้ตัวแปรเฉพาะ loop ที่เลือก — ทับตัวแปร global ที่ชื่อชนกัน (ตอนรัน loop นี้)"""
+        if not self._selected_loop:
+            messagebox.showwarning("", "เลือก loop ก่อน")
+            return
+        loop_cfg = self._config["loops"][self._selected_loop]
+        dlg = VariablesDialog(
+            self, loop_cfg.get("variables", {}),
+            title=f"ตัวแปรเฉพาะ Loop: {self._selected_loop}",
+            hint="ตัวแปรเหล่านี้ใช้ได้เฉพาะ loop นี้ และทับตัวแปร Global ที่ชื่อเดียวกัน",
+        )
+        self.wait_window(dlg)
+        if dlg.get_result() is not None:
+            result = dlg.get_result()
+            if result:
+                loop_cfg["variables"] = result
+            else:
+                loop_cfg.pop("variables", None)  # ไม่มีตัวแปร → ไม่รก config
+
     def _edit_states(self):
         # StatesDialog แก้ config['states'] ใน place (ใช้รายชื่อ loop ปัจจุบัน)
         dlg = StatesDialog(self, self._config)
@@ -1628,10 +1652,14 @@ class SequenceEditor(tk.Toplevel):
         return DataSource.read_headers(path)
 
     def _loop_variables(self) -> list:
-        """รายชื่อตัวแปรที่ใช้ได้ในช่อง type — built-in + ตัวแปร global จาก config"""
-        builtins = ["TODAY", "TODAY_ISO"]
-        user_vars = list(self._config.get("variables", {}).keys())
-        return builtins + user_vars
+        """รายชื่อตัวแปรที่ใช้ได้ในช่อง type (สำหรับ dropdown) — มีสัญลักษณ์บอก scope:
+        🌐 = global/built-in, 📍 = เฉพาะ loop นี้ (picker จะ strip สัญลักษณ์ก่อนแทรก)"""
+        items = [f"🌐 {v}" for v in ("TODAY", "TODAY_ISO")]
+        items += [f"🌐 {v}" for v in self._config.get("variables", {})]
+        if self._selected_loop:
+            loop_vars = self._config["loops"][self._selected_loop].get("variables", {})
+            items += [f"📍 {v}" for v in loop_vars]
+        return items
 
     def _loop_capture_dir(self) -> str:
         """โฟลเดอร์เซฟรูปของ loop ที่เลือก = elements/<ชื่อ loop> (กันชื่อชนข้าม loop)"""
