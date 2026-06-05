@@ -25,7 +25,15 @@ a = Analysis(
     ],
     hookspath=[],
     runtime_hooks=[],
-    excludes=["pytest", "pytest_mock"],
+    # ตัด lib หนักที่โปรเจกต์ไม่ได้ใช้ออก (ติดมาจาก user site-packages ของโปรเจกต์อื่น)
+    # ช่วยให้ exe เล็กลง ~3 เท่า + build เร็วขึ้นมาก + โดน antivirus false-positive น้อยลง
+    excludes=[
+        "pytest", "pytest_mock",
+        "torch", "torchvision", "torchaudio",
+        "scipy", "pyarrow", "sympy",
+        "matplotlib", "IPython", "notebook", "jupyter", "sphinx",
+        "tensorflow", "sklearn",
+    ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,
