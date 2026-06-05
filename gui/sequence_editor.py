@@ -242,7 +242,8 @@ class RegionPicker(tk.Toplevel):
 class StepDialog(tk.Toplevel):
     """Dialog สำหรับเพิ่มหรือแก้ไข step"""
 
-    def __init__(self, parent, step: dict = None, csv_columns: list = None, capture_dir: str = "elements"):
+    def __init__(self, parent, step: dict = None, csv_columns: list = None,
+                 variables: list = None, capture_dir: str = "elements"):
         super().__init__(parent)
         self.title("แก้ไข Step" if step else "เพิ่ม Step")
         self.resizable(False, False)
@@ -250,6 +251,7 @@ class StepDialog(tk.Toplevel):
         self._result: dict = None
         self._step = step or {}
         self._csv_columns = csv_columns or []  # คอลัมน์ CSV ของ loop (สำหรับ dropdown ในช่อง type)
+        self._variables = variables or []  # ตัวแปรที่ใช้ได้ (built-in + global) สำหรับ dropdown ในช่อง type
         self._capture_dir = capture_dir or "elements"  # โฟลเดอร์เซฟรูปของ loop นี้ (กันชื่อชนข้าม loop)
         self._fields: dict[str, tk.Variable] = {}
         self._offset_label = None
@@ -308,6 +310,7 @@ class StepDialog(tk.Toplevel):
             self._add_field("text", "Text / Variable:", default=self._step.get("text", ""))
             tk.Label(self._fields_frame, text="  ตัวอย่าง: {USERNAME}  {TODAY}  {csv.COL}",
                      fg="gray", font=("Segoe UI", 8)).pack(anchor="w")
+            self._add_variable_picker()
             self._add_csv_column_picker()
             self._add_dropdown("method", "วิธีพิมพ์:", ["paste", "type"],
                                default=self._step.get("method", "paste"))
@@ -394,9 +397,9 @@ class StepDialog(tk.Toplevel):
             self._add_field("target", "Image file:", browse=True)
             self._add_field("confidence", "Confidence:", default=str(self._step.get("confidence", 0.85)))
             NestedStepsEditor(self._fields_frame, self._then, "THEN — ทำเมื่อ 'เจอ' รูป:", height=4,
-                              csv_columns=self._csv_columns, capture_dir=self._capture_dir).pack(fill="both", expand=True, pady=(8, 2))
+                              csv_columns=self._csv_columns, variables=self._variables, capture_dir=self._capture_dir).pack(fill="both", expand=True, pady=(8, 2))
             NestedStepsEditor(self._fields_frame, self._else, "ELSE — ทำเมื่อ 'ไม่เจอ' รูป:", height=4,
-                              csv_columns=self._csv_columns, capture_dir=self._capture_dir).pack(fill="both", expand=True, pady=2)
+                              csv_columns=self._csv_columns, variables=self._variables, capture_dir=self._capture_dir).pack(fill="both", expand=True, pady=2)
 
         elif action == "switch_image":
             self._add_field("confidence", "Confidence (default):", default=str(self._step.get("confidence", 0.85)))
@@ -405,7 +408,7 @@ class StepDialog(tk.Toplevel):
                      fg="gray", font=("Segoe UI", 8)).pack(anchor="w")
             self._build_cases_editor()
             NestedStepsEditor(self._fields_frame, self._default, "DEFAULT — ทำเมื่อไม่เข้า case ใด:", height=3,
-                              csv_columns=self._csv_columns, capture_dir=self._capture_dir).pack(fill="both", expand=True, pady=(8, 2))
+                              csv_columns=self._csv_columns, variables=self._variables, capture_dir=self._capture_dir).pack(fill="both", expand=True, pady=(8, 2))
 
         elif action == "write_row":
             row = tk.Frame(self._fields_frame)
@@ -533,7 +536,7 @@ class StepDialog(tk.Toplevel):
             self._cases_listbox.insert("end", f" {i:2d}. {target}  ({len(case.get('steps', []))} steps)")
 
     def _add_case(self):
-        dlg = CaseDialog(self, csv_columns=self._csv_columns, capture_dir=self._capture_dir)
+        dlg = CaseDialog(self, csv_columns=self._csv_columns, variables=self._variables, capture_dir=self._capture_dir)
         self.wait_window(dlg)
         if dlg.get_result():
             self._cases.append(dlg.get_result())
@@ -544,7 +547,7 @@ class StepDialog(tk.Toplevel):
         if not sel:
             return
         idx = sel[0]
-        dlg = CaseDialog(self, self._cases[idx], csv_columns=self._csv_columns, capture_dir=self._capture_dir)
+        dlg = CaseDialog(self, self._cases[idx], csv_columns=self._csv_columns, variables=self._variables, capture_dir=self._capture_dir)
         self.wait_window(dlg)
         if dlg.get_result():
             self._cases[idx] = dlg.get_result()
@@ -605,6 +608,24 @@ class StepDialog(tk.Toplevel):
         var = self._fields.get("text")
         if col and var is not None:
             var.set(var.get() + f"{{csv.{col}}}")
+
+    def _add_variable_picker(self):
+        """dropdown เลือกตัวแปร (global/built-in) → ใส่ {VAR} ต่อท้ายช่อง text"""
+        if not self._variables:
+            return
+        row = tk.Frame(self._fields_frame)
+        row.pack(fill="x", pady=2)
+        tk.Label(row, text="ตัวแปร:", width=18, anchor="w").pack(side="left")
+        var_sel = tk.StringVar(value=self._variables[0])
+        ttk.Combobox(row, textvariable=var_sel, values=self._variables,
+                     state="readonly", width=20).pack(side="left", padx=4)
+        tk.Button(row, text="+ ใส่ {VAR}",
+                  command=lambda: self._insert_var(var_sel.get())).pack(side="left", padx=4)
+
+    def _insert_var(self, name: str):
+        var = self._fields.get("text")
+        if name and var is not None:
+            var.set(var.get() + f"{{{name}}}")
 
     def _add_dropdown(self, key: str, label: str, options: list, default: str = ""):
         row = tk.Frame(self._fields_frame)
@@ -782,10 +803,11 @@ class NestedStepsEditor(tk.Frame):
     เปิด StepDialog ซ้ำแบบ recursive (StepDialog เป็น modal grab_set ซ้อนกันได้)"""
 
     def __init__(self, parent, steps: list, title: str, height: int = 5,
-                 csv_columns: list = None, capture_dir: str = "elements"):
+                 csv_columns: list = None, variables: list = None, capture_dir: str = "elements"):
         super().__init__(parent)
         self._steps = steps  # อ้างถึง list เดิม → แก้ใน place
         self._csv_columns = csv_columns or []
+        self._variables = variables or []
         self._capture_dir = capture_dir or "elements"
 
         tk.Label(self, text=title, anchor="w", fg="#0e639c",
@@ -821,7 +843,7 @@ class NestedStepsEditor(tk.Frame):
 
     def _open_dialog(self, step: dict = None) -> dict | None:
         dlg = StepDialog(self.winfo_toplevel(), step,
-                         csv_columns=self._csv_columns, capture_dir=self._capture_dir)
+                         csv_columns=self._csv_columns, variables=self._variables, capture_dir=self._capture_dir)
         self.wait_window(dlg)
         return dlg.get_result()
 
@@ -876,13 +898,15 @@ class NestedStepsEditor(tk.Frame):
 class CaseDialog(tk.Toplevel):
     """แก้ไข 1 case ของ switch_image: target + confidence + steps"""
 
-    def __init__(self, parent, case: dict = None, csv_columns: list = None, capture_dir: str = "elements"):
+    def __init__(self, parent, case: dict = None, csv_columns: list = None,
+                 variables: list = None, capture_dir: str = "elements"):
         super().__init__(parent)
         self.title("แก้ไข Case" if case else "เพิ่ม Case")
         self.grab_set()
         self._result = None
         self._case = case or {}
         self._csv_columns = csv_columns or []
+        self._variables = variables or []
         self._capture_dir = capture_dir or "elements"
         self._steps = copy.deepcopy(self._case.get("steps", []))
         self._build()
@@ -908,7 +932,7 @@ class CaseDialog(tk.Toplevel):
                  font=("Segoe UI", 8)).pack(side="left", padx=4)
 
         NestedStepsEditor(self, self._steps, "Steps ของ case นี้:", height=5,
-                          csv_columns=self._csv_columns, capture_dir=self._capture_dir).pack(
+                          csv_columns=self._csv_columns, variables=self._variables, capture_dir=self._capture_dir).pack(
             fill="both", expand=True, padx=10, pady=4)
 
         btn = tk.Frame(self)
@@ -1363,6 +1387,11 @@ class SequenceEditor(tk.Toplevel):
         self._csv_label = tk.Label(hdr, text="", bg="#1e1e1e", fg="#ce9178", font=("Segoe UI", 8))
         self._csv_label.pack(side="left", padx=6)
 
+        # ปุ่มเปิดไฟล์ตาราง (csv/xlsx) ที่ loop ผูกไว้ — โผล่เฉพาะ loop ที่มี data_source
+        self._open_csv_btn = tk.Button(hdr, text="📂 เปิดตาราง", font=("Segoe UI", 8),
+                                       command=self._open_csv_file)
+        self._current_csv = ""  # path ของ data_source ของ loop ที่เลือกอยู่
+
         # Steps listbox
         list_frame = tk.Frame(right, bg="#2d2d2d")
         list_frame.pack(fill="both", expand=True, padx=10, pady=6)
@@ -1418,8 +1447,27 @@ class SequenceEditor(tk.Toplevel):
 
         ds = self._config["loops"][name].get("data_source", "")
         self._csv_label.configure(text=f"CSV: {ds}" if ds else "")
+        self._current_csv = ds
+        if ds:
+            self._open_csv_btn.pack(side="left", padx=4)
+        else:
+            self._open_csv_btn.pack_forget()
 
         self._refresh_steps()
+
+    def _open_csv_file(self):
+        """เปิดไฟล์ตาราง (csv/xlsx) ของ loop ที่เลือก ด้วยโปรแกรมเริ่มต้น (Excel)"""
+        path = self._current_csv
+        if not path:
+            return
+        abspath = path if os.path.isabs(path) else os.path.abspath(path)
+        if not os.path.exists(abspath):
+            messagebox.showwarning("ไม่พบไฟล์", f"ไม่พบไฟล์ข้อมูล:\n{abspath}")
+            return
+        try:
+            os.startfile(abspath)  # Windows: เปิดด้วยโปรแกรมที่ผูกกับนามสกุล (Excel)
+        except Exception as e:
+            messagebox.showerror("เปิดไฟล์ไม่ได้", str(e))
 
     def _new_loop(self):
         name = tk.simpledialog.askstring("Loop ใหม่", "ชื่อ loop:", parent=self)
@@ -1579,6 +1627,12 @@ class SequenceEditor(tk.Toplevel):
         from engine.data_source import DataSource
         return DataSource.read_headers(path)
 
+    def _loop_variables(self) -> list:
+        """รายชื่อตัวแปรที่ใช้ได้ในช่อง type — built-in + ตัวแปร global จาก config"""
+        builtins = ["TODAY", "TODAY_ISO"]
+        user_vars = list(self._config.get("variables", {}).keys())
+        return builtins + user_vars
+
     def _loop_capture_dir(self) -> str:
         """โฟลเดอร์เซฟรูปของ loop ที่เลือก = elements/<ชื่อ loop> (กันชื่อชนข้าม loop)"""
         if not self._selected_loop:
@@ -1591,6 +1645,7 @@ class SequenceEditor(tk.Toplevel):
             messagebox.showwarning("", "เลือก loop ก่อน")
             return
         dlg = StepDialog(self, csv_columns=self._loop_csv_columns(),
+                         variables=self._loop_variables(),
                          capture_dir=self._loop_capture_dir())
         self.wait_window(dlg)
         if dlg.get_result():
@@ -1606,6 +1661,7 @@ class SequenceEditor(tk.Toplevel):
             return
         idx = sel[0]
         dlg = StepDialog(self, self._steps()[idx], csv_columns=self._loop_csv_columns(),
+                         variables=self._loop_variables(),
                          capture_dir=self._loop_capture_dir())
         self.wait_window(dlg)
         if dlg.get_result():
