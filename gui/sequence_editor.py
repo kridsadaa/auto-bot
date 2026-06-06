@@ -1337,7 +1337,8 @@ class SequenceEditor(tk.Toplevel):
     def __init__(self, parent):
         super().__init__(parent)
         self.title("Sequence Editor")
-        self.geometry("820x560")
+        self.geometry("880x600")
+        self.minsize(820, 540)  # กันปุ่มคอลัมน์ซ้ายถูกบีบเมื่อย่อหน้าต่าง (เหมือนหน้าหลัก)
         self.resizable(True, True)
 
         self._config = _load_config()
