@@ -45,3 +45,11 @@ def test_app_base_dir_uses_cwd_when_not_frozen(monkeypatch, tmp_path):
     monkeypatch.setattr(runtime, "is_frozen", lambda: False)
     monkeypatch.chdir(tmp_path)
     assert runtime.app_base_dir() == os.getcwd()
+
+
+def test_icon_path_finds_repo_icon(monkeypatch, tmp_path):
+    # แม้ cwd ไม่ใช่ repo root, ก็ต้องหา icon.ico เจอผ่าน path เทียบจากไฟล์ runtime.py
+    monkeypatch.chdir(tmp_path)
+    p = runtime.icon_path()
+    assert p is not None
+    assert p.endswith("icon.ico") and os.path.exists(p)

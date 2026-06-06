@@ -8,6 +8,7 @@ a = Analysis(
     binaries=[],
     datas=[
         ("config/bot_config.example.yaml", "config"),
+        ("icon.ico", "."),  # ใช้ตั้ง icon หน้าต่าง GUI ตอน runtime
     ],
     hiddenimports=[
         "cv2",
@@ -57,5 +58,5 @@ exe = EXE(
     runtime_tmpdir=None,
     console=False,       # ซ่อน console window
     onefile=True,        # รวมเป็น .exe เดียว
-    icon=None,
+    icon="icon.ico",
 )

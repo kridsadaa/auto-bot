@@ -5,6 +5,8 @@ import yaml
 import os
 import copy
 
+from engine.runtime import apply_window_icon
+
 CONFIG_PATH = "config/bot_config.yaml"
 
 ACTION_TYPES = [
@@ -1340,6 +1342,7 @@ class SequenceEditor(tk.Toplevel):
         self.geometry("880x600")
         self.minsize(820, 540)  # กันปุ่มคอลัมน์ซ้ายถูกบีบเมื่อย่อหน้าต่าง (เหมือนหน้าหลัก)
         self.resizable(True, True)
+        apply_window_icon(self)
 
         self._config = _load_config()
         self._selected_loop: str = None

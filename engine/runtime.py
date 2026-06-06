@@ -32,6 +32,33 @@ def app_base_dir() -> str:
     return os.getcwd()
 
 
+def icon_path() -> str | None:
+    """path ของ icon.ico — รองรับทั้ง dev และ frozen (_MEIPASS); คืน None ถ้าไม่เจอ"""
+    candidates = []
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        candidates.append(os.path.join(meipass, "icon.ico"))
+    candidates.append(os.path.join(app_base_dir(), "icon.ico"))
+    # repo root (เทียบจากไฟล์นี้: engine/runtime.py → ขึ้นสองชั้น)
+    candidates.append(os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "icon.ico"))
+    for c in candidates:
+        if os.path.exists(c):
+            return c
+    return None
+
+
+def apply_window_icon(window) -> None:
+    """ตั้ง icon ให้หน้าต่าง tkinter (เงียบถ้าไม่มีไฟล์/ตั้งไม่ได้)"""
+    p = icon_path()
+    if not p:
+        return
+    try:
+        window.iconbitmap(p)
+    except Exception:
+        pass
+
+
 def bundled_example_path() -> str | None:
     """path ของ bot_config.example.yaml ที่ถูก bundle (อยู่ใน _MEIPASS เมื่อ frozen)"""
     meipass = getattr(sys, "_MEIPASS", None)

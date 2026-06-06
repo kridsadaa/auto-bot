@@ -6,6 +6,7 @@ from tkinter import ttk, messagebox, simpledialog
 import yaml
 
 from engine.data_source import DataSource
+from engine.runtime import apply_window_icon
 from engine.interrupt_handler import InterruptHandler, BotStoppedError
 from engine.loop_runner import LoopRunner
 from engine.screen_monitor import ScreenMonitor
@@ -29,6 +30,7 @@ class MainWindow(tk.Tk):
         self.minsize(860, 480)
         self.resizable(True, True)
         self.configure(bg="#2d2d2d")
+        apply_window_icon(self)
 
         self._config = self._load_config()
         self._mode = tk.StringVar(value="agent")
