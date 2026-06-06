@@ -34,6 +34,8 @@ class MainWindow(tk.Tk):
 
         self._config = self._load_config()
         self._mode = tk.StringVar(value="agent")
+        # รันแบบ: "direct" = เลือก loop รันทันที, "trigger" = เฝ้าหน้าจอหา trigger image
+        self._run_mode = tk.StringVar(value="direct")
         self._status = tk.StringVar(value="พร้อมใช้งาน")
         self._running = False
         self._interrupt = InterruptHandler(
@@ -64,19 +66,50 @@ class MainWindow(tk.Tk):
             bg="#1e1e1e", fg="white",
         ).pack(side="left", padx=14)
 
-        # Mode toggle
-        mode_frame = tk.Frame(header, bg="#1e1e1e")
-        mode_frame.pack(side="right", padx=14)
-        tk.Label(mode_frame, text="Mode:", bg="#1e1e1e", fg="#9cdcfe").pack(side="left")
-        for val, label in [("copilot", "Copilot"), ("agent", "Agent")]:
-            tk.Radiobutton(
-                mode_frame, text=label, variable=self._mode, value=val,
-                bg="#1e1e1e", fg="white", selectcolor="#0e639c",
-                activebackground="#1e1e1e", activeforeground="white",
-            ).pack(side="left", padx=4)
+        # --- แถว: รันแบบ (เลือกว่า Start จะทำอะไร) ---
+        runmode_bar = tk.Frame(self, bg="#2d2d2d", pady=6)
+        runmode_bar.pack(fill="x", padx=10, pady=(6, 0))
+        tk.Label(runmode_bar, text="รันแบบ:", bg="#2d2d2d", fg="#9cdcfe",
+                 font=("Segoe UI", 9, "bold")).pack(side="left", padx=(4, 8))
+        self._run_mode_radios = []
+        for val, label in [("direct", "เลือก Loop รันทันที"),
+                           ("trigger", "เฝ้า Trigger อัตโนมัติ")]:
+            rb = tk.Radiobutton(
+                runmode_bar, text=label, variable=self._run_mode, value=val,
+                bg="#2d2d2d", fg="white", selectcolor="#0e639c",
+                activebackground="#2d2d2d", activeforeground="white",
+                command=self._on_run_mode_change,
+            )
+            rb.pack(side="left", padx=6)
+            self._run_mode_radios.append(rb)
 
-        # --- แถว 1: Bot controls ---
-        ctrl1 = tk.Frame(self, bg="#2d2d2d", pady=5)
+        # --- แถว: Loop (สำหรับ direct) + Mode (สำหรับ trigger) ---
+        cfg_bar = tk.Frame(self, bg="#2d2d2d", pady=4)
+        cfg_bar.pack(fill="x", padx=10)
+
+        tk.Label(cfg_bar, text="Loop:", bg="#2d2d2d", fg="#9cdcfe",
+                 font=("Segoe UI", 9)).pack(side="left", padx=(4, 8))
+        self._loop_choice = tk.StringVar()
+        self._loop_combo = ttk.Combobox(
+            cfg_bar, textvariable=self._loop_choice, state="readonly", width=26,
+        )
+        self._loop_combo.pack(side="left", padx=4)
+
+        tk.Label(cfg_bar, text="Mode:", bg="#2d2d2d", fg="#9cdcfe",
+                 font=("Segoe UI", 9)).pack(side="left", padx=(18, 4))
+        self._mode_radios = []
+        for val, label in [("copilot", "Copilot"), ("agent", "Agent")]:
+            rb = tk.Radiobutton(
+                cfg_bar, text=label, variable=self._mode, value=val,
+                bg="#2d2d2d", fg="white", selectcolor="#0e639c",
+                activebackground="#2d2d2d", activeforeground="white",
+            )
+            rb.pack(side="left", padx=4)
+            self._mode_radios.append(rb)
+        self._refresh_loop_choices()
+
+        # --- แถว: ปุ่มควบคุม ---
+        ctrl1 = tk.Frame(self, bg="#2d2d2d", pady=6)
         ctrl1.pack(fill="x", padx=10)
 
         self._btn_start = tk.Button(
@@ -102,31 +135,7 @@ class MainWindow(tk.Tk):
         tk.Label(ctrl1, text="ESC = หยุดบอท (ทุกหน้าต่าง)  |  Mouse มุมซ้ายบน = หยุดทันที",
                  bg="#2d2d2d", fg="#6e6e6e", font=("Segoe UI", 8)).pack(side="left", padx=14)
 
-        # --- แถว Run Loop โดยตรง (ไม่ต้องมี state/trigger) ---
-        run_loop_bar = tk.Frame(self, bg="#2d2d2d", pady=5)
-        run_loop_bar.pack(fill="x", padx=10)
-
-        tk.Label(run_loop_bar, text="Run Loop:", bg="#2d2d2d", fg="#9cdcfe",
-                 font=("Segoe UI", 9)).pack(side="left", padx=(4, 8))
-
-        self._loop_choice = tk.StringVar()
-        self._loop_combo = ttk.Combobox(
-            run_loop_bar, textvariable=self._loop_choice,
-            state="readonly", width=28,
-        )
-        self._loop_combo.pack(side="left", padx=4)
-
-        self._btn_run_loop = tk.Button(
-            run_loop_bar, text="▶  Run Loop นี้", width=14,
-            bg="#dcdcaa", fg="black", font=("Segoe UI", 9, "bold"),
-            command=self._run_selected_loop,
-        )
-        self._btn_run_loop.pack(side="left", padx=6)
-
-        tk.Label(run_loop_bar, text="(run ทันที ไม่ต้องรอ trigger image)",
-                 bg="#2d2d2d", fg="#6e6e6e", font=("Segoe UI", 8)).pack(side="left", padx=8)
-
-        self._refresh_loop_choices()
+        self._on_run_mode_change()  # ตั้งสถานะ enable/disable ของ Loop/Mode ให้ตรงค่าเริ่มต้น
 
         # --- แถว 2: Tools ---
         ctrl2 = tk.Frame(self, bg="#252526", pady=5)
@@ -279,9 +288,24 @@ class MainWindow(tk.Tk):
         self._bot_thread.start()
 
     def _on_start(self):
+        """ปุ่ม Start เดียว — ทำตาม 'รันแบบ' ที่เลือก"""
+        if self._run_mode.get() == "direct":
+            self._run_selected_loop()      # เลือก loop รันทันที (ไม่รอ trigger)
+        else:
+            self._start_trigger_mode()     # เฝ้าหน้าจอหา trigger แล้วรัน loop อัตโนมัติ
+
+    def _start_trigger_mode(self):
         self._config = self._load_config()
         self._refresh_state_list()
         self._refresh_loop_choices()
+
+        if not self._config.get("states"):
+            messagebox.showwarning(
+                "ยังไม่มี Trigger",
+                "โหมด 'เฝ้า Trigger' ต้องตั้ง state/trigger image ก่อน\n"
+                "(ตั้งใน Sequence Editor → States) — หรือใช้ 'เลือก Loop รันทันที' แทน",
+            )
+            return
 
         # ถามค่า runtime variables ที่ยังว่างอยู่
         runtime_vars = self._prompt_runtime_vars()
@@ -428,12 +452,32 @@ class MainWindow(tk.Tk):
         self._status.set("หยุดทำงาน")
         self._queue_log("Bot หยุดทำงาน", "warn")
 
+    def _on_run_mode_change(self):
+        """เปิด/ปิดคอนโทรลให้ตรงกับ 'รันแบบ' ที่เลือก — ลดความงงว่าอันไหนมีผล
+        - direct: ใช้ Loop dropdown (Mode ไม่เกี่ยว → ปิด)
+        - trigger: ใช้ Mode Copilot/Agent (Loop dropdown ไม่เกี่ยว → ปิด)
+        """
+        if self._running:
+            return
+        direct = self._run_mode.get() == "direct"
+        self._loop_combo.configure(state="readonly" if direct else "disabled")
+        for rb in self._mode_radios:
+            rb.configure(state="disabled" if direct else "normal")
+
     def _set_running_state(self, running: bool):
         self._running = running
         self._btn_start.configure(state="disabled" if running else "normal")
-        self._btn_run_loop.configure(state="disabled" if running else "normal")
         self._btn_pause.configure(state="normal" if running else "disabled")
         self._btn_stop.configure(state="normal" if running else "disabled")
+        # ปิดตัวเลือกขณะรัน, เปิดคืนตาม run mode เมื่อหยุด
+        for rb in getattr(self, "_run_mode_radios", []):
+            rb.configure(state="disabled" if running else "normal")
+        if running:
+            self._loop_combo.configure(state="disabled")
+            for rb in self._mode_radios:
+                rb.configure(state="disabled")
+        else:
+            self._on_run_mode_change()
 
     def _on_capture_trigger(self):
         tool = CaptureTool(self, save_dir="triggers", on_done=self._on_captured_trigger)
