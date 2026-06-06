@@ -6,6 +6,7 @@ import os
 import copy
 
 from engine.runtime import apply_window_icon
+from engine import prefs
 
 CONFIG_PATH = "config/bot_config.yaml"
 
@@ -314,13 +315,19 @@ class StepDialog(tk.Toplevel):
                      fg="gray", font=("Segoe UI", 8)).pack(anchor="w")
             self._add_variable_picker()
             self._add_csv_column_picker()
+            # step ใหม่ → ใช้ค่าล่าสุดที่จำไว้ (prefs); step เดิม → ใช้ค่าจริงของมัน
+            is_new = not self._step
+            method_default = (prefs.get("type_method", "paste") if is_new
+                              else self._step.get("method", "paste"))
             self._add_dropdown("method", "วิธีพิมพ์:", ["paste", "type"],
-                               default=self._step.get("method", "paste"))
+                               default=method_default, readonly=True)
             tk.Label(self._fields_frame,
                      text="  paste = วางผ่าน clipboard (เร็ว, เหมาะ SAP) / type = จำลองกดคีย์ทีละตัว (แอปที่บล็อก paste)",
                      fg="gray", font=("Segoe UI", 8)).pack(anchor="w")
+            clear_on = (prefs.get("type_clear_first", False) if is_new
+                        else bool(self._step.get("clear_first")))
             self._add_dropdown("clear_first", "เคลียร์ก่อนพิมพ์:", ["no", "yes"],
-                               default=("yes" if self._step.get("clear_first") else "no"))
+                               default=("yes" if clear_on else "no"), readonly=True)
             tk.Label(self._fields_frame,
                      text="  yes = กด Ctrl+A → Delete ลบค่าเดิมก่อน (กันช่อง SAP ที่จำค่าเก่า/ต่อกัน)",
                      fg="gray", font=("Segoe UI", 8)).pack(anchor="w")
@@ -631,12 +638,17 @@ class StepDialog(tk.Toplevel):
         if name and var is not None:
             var.set(var.get() + f"{{{name}}}")
 
-    def _add_dropdown(self, key: str, label: str, options: list, default: str = ""):
+    def _add_dropdown(self, key: str, label: str, options: list, default: str = "",
+                      readonly: bool = False):
+        # ใช้ค่า default ที่ผู้เรียกคำนวณมาตรงๆ — อย่าไปอ่าน self._step ทับ
+        # (สำคัญกับ clear_first ที่เก็บเป็น bool แต่ dropdown ใช้ "yes"/"no")
         row = tk.Frame(self._fields_frame)
         row.pack(fill="x", pady=2)
         tk.Label(row, text=label, width=18, anchor="w").pack(side="left")
-        var = tk.StringVar(value=self._step.get(key, default))
-        ttk.Combobox(row, textvariable=var, values=options, width=20).pack(side="left", padx=4)
+        var = tk.StringVar(value=default)
+        state = "readonly" if readonly else "normal"
+        ttk.Combobox(row, textvariable=var, values=options, width=20,
+                     state=state).pack(side="left", padx=4)
         self._fields[key] = var
 
     def _add_region_field(self, key: str, label: str):
@@ -786,6 +798,11 @@ class StepDialog(tk.Toplevel):
         elif action == "switch_image":
             step["cases"] = self._cases
             step["default"] = self._default
+
+        # จำค่าล่าสุดของ type ไว้เป็น default ของ step ใหม่ครั้งหน้า
+        if action == "type":
+            prefs.set("type_method", step.get("method", "paste"))
+            prefs.set("type_clear_first", bool(step.get("clear_first")))
 
         self._result = step
         self.destroy()
