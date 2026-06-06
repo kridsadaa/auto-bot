@@ -69,6 +69,9 @@ cp config/bot_config.example.yaml config/bot_config.yaml
 
 แก้ไข `config/bot_config.yaml` ใส่ username และค่าที่ต้องการ
 
+> **รันเป็น .exe:** ไม่ต้อง copy เอง — ตอนเปิดครั้งแรก โปรแกรมจะสร้าง `config/bot_config.yaml`
+> ข้างๆ `AutoBot.exe` ให้อัตโนมัติ (จากไฟล์ตัวอย่าง) แล้วแก้ไฟล์นั้นได้เลย
+
 ## วิธีใช้
 
 ```bash

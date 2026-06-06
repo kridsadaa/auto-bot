@@ -71,6 +71,10 @@ copy config\bot_config.example.yaml config\bot_config.yaml
 
 Edit `config/bot_config.yaml` and fill in your username and values.
 
+> **Running the .exe:** no manual copy needed — on first launch the app
+> auto-creates `config/bot_config.yaml` next to `AutoBot.exe` (from the
+> bundled example); just edit that file.
+
 ## Usage
 
 ```powershell
