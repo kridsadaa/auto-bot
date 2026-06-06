@@ -1,0 +1,101 @@
+name: Release
+
+# trigger: push tag vX.Y.Z
+# วิธีใช้:
+#   git tag v1.1.0 -m "รายละเอียด"
+#   git push origin v1.1.0
+# → workflow build AutoBot.exe แล้วสร้าง GitHub Release แนบไฟล์ให้อัตโนมัติ
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write   # จำเป็นสำหรับ create release + upload asset
+
+jobs:
+  # ─── job 1: ทดสอบก่อนเสมอ ─────────────────────────────────────────────────
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies + test tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-mock
+
+      - name: Run test suite
+        run: pytest -q
+
+  # ─── job 2: build exe (เฉพาะถ้า test ผ่าน) ───────────────────────────────
+  build:
+    needs: test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Create clean venv + install dependencies
+        run: |
+          python -m venv .venv
+          .\.venv\Scripts\python.exe -m pip install --upgrade pip --quiet
+          .\.venv\Scripts\python.exe -m pip install -r requirements.txt
+          .\.venv\Scripts\python.exe -m pip install pyinstaller
+
+      - name: Build AutoBot.exe
+        run: .\.venv\Scripts\python.exe -m PyInstaller auto_bot.spec --clean --noconfirm
+
+      - name: Rename exe to include version tag
+        # AutoBot-v1.1.0.exe ให้รู้เวอร์ชันตอนดาวน์โหลด
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $src = "dist\AutoBot.exe"
+          $dst = "dist\AutoBot-$tag.exe"
+          Move-Item $src $dst
+          Write-Output "exe_name=AutoBot-$tag.exe" >> $env:GITHUB_OUTPUT
+          Write-Output "exe_path=dist\AutoBot-$tag.exe" >> $env:GITHUB_OUTPUT
+        id: rename
+
+      - name: Upload exe artifact (ส่งต่อระหว่าง jobs)
+        uses: actions/upload-artifact@v4
+        with:
+          name: autobot-exe
+          path: ${{ steps.rename.outputs.exe_path }}
+          retention-days: 1
+
+  # ─── job 3: สร้าง GitHub Release + แนบ exe ──────────────────────────────
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # ต้องการ history ทั้งหมดสำหรับ release notes
+
+      - name: Download built exe
+        uses: actions/download-artifact@v4
+        with:
+          name: autobot-exe
+          path: dist/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          # release notes อัตโนมัติ — สรุป commits ตั้งแต่ tag ก่อนหน้า
+          generate_release_notes: true
+          files: dist/AutoBot-${{ github.ref_name }}.exe
+          # draft=false → publish ทันที; prerelease ถ้า tag มี -beta/-rc
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-beta') || contains(github.ref_name, '-rc') }}
