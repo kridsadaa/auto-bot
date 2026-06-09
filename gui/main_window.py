@@ -259,16 +259,24 @@ class MainWindow(tk.Tk):
 
         data_source = DataSource(runtime_vars)
         loop_cfg = loops[loop_name]
+
+        # SAP Shadow Capture — เริ่มเบื้องหลัง ถ้าไม่พร้อมก็ fail เงียบๆ
+        from engine.sap_capture import SapCapture
+        sap_cap = SapCapture()
+        sap_available = sap_cap.start()
+        if sap_available:
+            self._queue_log("🔍 SAP Shadow Capture เริ่มแล้ว (จะแสดง Compare เมื่อจบ)", "info")
+
         runner = LoopRunner(
             interrupt=self._interrupt,
             on_debug=lambda ctx: self._handle_debug(ctx),
             on_log=lambda msg: self._queue_log(msg),
+            sap_capture=sap_cap,
         )
 
         def run():
+            success = False
             try:
-                # นับถอยหลังให้ผู้ใช้คลิกหน้าต่างปลายทาง (เช่น Excel/ฟอร์ม) ก่อน bot เริ่มพิมพ์
-                # ป้องกันเคส keystroke ยิงเข้า Auto Bot เองเพราะ focus ยังไม่ได้ย้าย
                 for i in range(START_COUNTDOWN, 0, -1):
                     if self._interrupt.is_stopped():
                         return
@@ -276,16 +284,34 @@ class MainWindow(tk.Tk):
                     time.sleep(1)
                 runner.run_loop(loop_cfg, data_source)
                 self._queue_log(f"Loop {loop_name} เสร็จสิ้น", "ok")
+                success = True
             except BotStoppedError:
                 self._queue_log("Bot หยุดโดยผู้ใช้", "warn")
             except Exception as ex:
                 self._queue_log(f"Error: {ex}", "error")
             finally:
+                sap_events = sap_cap.stop()
                 self.after(0, lambda: self._set_running_state(False))
                 self.after(0, lambda: self._status.set("เสร็จสิ้น"))
+                # แสดงปุ่ม Compare เฉพาะเมื่อ loop จบโดยไม่มี error + มี SAP events
+                if success and sap_available and sap_events:
+                    self.after(0, lambda: self._show_sap_compare(
+                        loop_name, loop_cfg.get("steps", []), sap_events))
 
         self._bot_thread = threading.Thread(target=run, daemon=True)
         self._bot_thread.start()
+
+    def _show_sap_compare(self, loop_name: str, image_steps: list, sap_events: list):
+        """เปิด Compare dialog หลัง loop จบสำเร็จ + มี SAP events"""
+        from gui.sap_compare_dialog import SapCompareDialog
+        def on_save(new_name: str, new_steps: list):
+            self._config.setdefault("loops", {})[new_name] = {"steps": new_steps}
+            # เซฟ config ทันที
+            import yaml
+            with open("config/bot_config.yaml", "w", encoding="utf-8") as f:
+                yaml.dump(self._config, f, allow_unicode=True, sort_keys=False)
+            self._queue_log(f"✅ สร้าง loop '{new_name}' (SAP script) แล้ว", "ok")
+        SapCompareDialog(self, image_steps, sap_events, loop_name, on_save=on_save)
 
     def _on_start(self):
         """ปุ่ม Start เดียว — ทำตาม 'รันแบบ' ที่เลือก"""

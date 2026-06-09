@@ -16,6 +16,7 @@ ACTION_TYPES = [
     "skip_row_if_image", "skip_row", "if_image", "switch_image",
     "write_row",
     "click_element", "set_element_text", "wait_element",
+    "sap_set_field", "sap_get_field", "sap_press",
 ]
 
 KEY_OPTIONS = ["enter", "tab", "escape", "f1", "f2", "f3", "f4", "f5", "f6",
@@ -441,6 +442,39 @@ class StepDialog(tk.Toplevel):
                 self._add_field("text", "Text / Variable:", default=self._step.get("text", ""))
             self._add_element_fields()
 
+        # ─── SAP Scripting actions ───────────────────────────────────────────
+        elif action == "sap_set_field":
+            self._add_field("text", "Text / Variable:", default=self._step.get("text", ""))
+            self._add_variable_picker()
+            self._add_csv_column_picker()
+            self._add_sap_field_row("field_id", "SAP Field ID:")
+            tk.Label(self._fields_frame,
+                     text="  เช่น wnd[0]/usr/ctxtMATNR  หรือกด '🔍 จิ้ม SAP field'",
+                     fg="gray", font=("Segoe UI", 8)).pack(anchor="w")
+
+        elif action == "sap_get_field":
+            self._add_sap_field_row("field_id", "SAP Field ID:")
+            tk.Label(self._fields_frame,
+                     text="  เช่น wnd[0]/sbar  (status bar ที่มีเลข order)",
+                     fg="gray", font=("Segoe UI", 8)).pack(anchor="w")
+            self._add_field("variable", "เก็บค่าลงตัวแปร:",
+                            default=self._step.get("variable", "SAP_VALUE"))
+            tk.Label(self._fields_frame,
+                     text="  ใช้ค่าที่อ่านได้ใน step ถัดไปด้วย {SAP_VALUE}",
+                     fg="gray", font=("Segoe UI", 8)).pack(anchor="w")
+
+        elif action == "sap_press":
+            self._add_sap_field_row("field_id", "SAP Field ID (ออปชัน):")
+            tk.Label(self._fields_frame,
+                     text="  เช่น wnd[0]/tbar[0]/btn[0] — หรือใช้ Virtual Key แทน",
+                     fg="gray", font=("Segoe UI", 8)).pack(anchor="w")
+            self._add_dropdown("vkey", "Virtual Key:", ["", "enter", "f3", "f4", "f8",
+                                                         "f12", "save", "back"],
+                               default=str(self._step.get("vkey", "")), readonly=True)
+            tk.Label(self._fields_frame,
+                     text="  enter=ยืนยัน, f3=Back, f8=Execute, f12=Cancel, save=บันทึก",
+                     fg="gray", font=("Segoe UI", 8)).pack(anchor="w")
+
     def _add_element_fields(self):
         tk.Label(self._fields_frame,
                  text="  เล็ง element ด้วย UI Automation — กรอกเท่าที่จำเป็น (ว่าง = ไม่ใช้เกณฑ์นั้น)",
@@ -457,6 +491,37 @@ class StepDialog(tk.Toplevel):
                   command=self._inspect_element).pack(side="left", padx=4)
         tk.Label(row, text="กดแล้วเอาเมาส์ชี้ element เป้าหมาย (มีนับถอยหลัง)",
                  fg="gray", font=("Segoe UI", 8)).pack(side="left", padx=4)
+
+    def _add_sap_field_row(self, key: str, label: str):
+        """ช่องกรอก SAP element ID + ปุ่ม 'จิ้ม SAP field' (ใช้ pick_field_id)"""
+        row = tk.Frame(self._fields_frame)
+        row.pack(fill="x", pady=2)
+        tk.Label(row, text=label, width=18, anchor="w").pack(side="left")
+        var = tk.StringVar(value=self._step.get(key, ""))
+        tk.Entry(row, textvariable=var, width=32).pack(side="left", padx=4)
+        tk.Button(row, text="🔍 จิ้ม SAP field", bg="#dcdcaa",
+                  command=lambda: self._pick_sap_field(var)).pack(side="left", padx=2)
+        self._fields[key] = var
+
+    def _pick_sap_field(self, var: tk.StringVar):
+        """นับถอยหลัง 3 วิ → รอผู้ใช้คลิก field ใน SAP → ใส่ ID ลงช่อง"""
+        self.withdraw()
+
+        def do():
+            from engine.sap_actions import pick_field_id, SapNotAvailableError
+            try:
+                field_id = pick_field_id(timeout=20)
+                if field_id:
+                    var.set(field_id)
+                else:
+                    messagebox.showwarning("SAP Picker", "ไม่ได้รับ field ID — คลิก field ใน SAP ระหว่างนับถอยหลัง", parent=self)
+            except SapNotAvailableError as e:
+                messagebox.showerror("SAP Picker", f"ไม่พร้อม: {e}", parent=self)
+            except Exception as e:
+                messagebox.showwarning("SAP Picker", f"เกิดข้อผิดพลาด: {e}", parent=self)
+            self._deiconify_focus()
+
+        self._countdown_then(3, do)
 
     def _inspect_element(self):
         self.withdraw()
@@ -785,6 +850,9 @@ class StepDialog(tk.Toplevel):
                     step[key] = True
                 else:
                     step.pop(key, None)
+            elif key == "vkey":
+                # vkey ว่าง = ไม่ใช้; ถ้าเป็น string ชื่อ (enter, f3 ฯลฯ) เก็บเป็น string
+                step[key] = val
             else:
                 step[key] = val
 

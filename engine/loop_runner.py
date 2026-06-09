@@ -30,6 +30,7 @@ class LoopRunner:
         on_image_not_found: Callable[[ImageNotFoundError], str] = None,
         on_log: Callable[[str], None] = None,
         on_debug: Callable[[dict], dict] = None,
+        sap_capture=None,  # SapCapture instance (optional) — shadow record ระหว่างรัน
     ):
         self._interrupt = interrupt
         self._on_image_not_found = on_image_not_found
@@ -38,6 +39,7 @@ class LoopRunner:
         self._on_debug = on_debug
         self._on_log = on_log or print
         self._error_guards: list = []
+        self._sap_capture = sap_capture
         actions.set_log_callback(self._on_log)
 
     def run_loop(self, loop_config: dict, data_source: DataSource):
@@ -354,6 +356,29 @@ class LoopRunner:
                 self._do_skip_row(step)
             elif action == "skip_row_if_image":
                 self._do_skip_row_if_image(step)
+            # ─── SAP Scripting actions ───────────────────────────────────────
+            elif action == "sap_set_field":
+                from engine.sap_actions import sap_set_field
+                text = data_source.resolve(step.get("text", ""))
+                sap_set_field(step["field_id"], text,
+                              connection=step.get("connection", 0),
+                              session=step.get("session", 0))
+                self._on_log(f"SAP set '{step['field_id']}' = {repr(text)}")
+            elif action == "sap_get_field":
+                from engine.sap_actions import sap_get_field
+                val = sap_get_field(step["field_id"],
+                                    connection=step.get("connection", 0),
+                                    session=step.get("session", 0))
+                var_name = step.get("variable", "SAP_VALUE")
+                data_source.set_runtime(var_name, val)
+                self._on_log(f"SAP get '{step['field_id']}' → {{{var_name}}} = {repr(val)}")
+            elif action == "sap_press":
+                from engine.sap_actions import sap_press
+                sap_press(field_id=step.get("field_id"),
+                          vkey=step.get("vkey"),
+                          connection=step.get("connection", 0),
+                          session=step.get("session", 0))
+                self._on_log(f"SAP press: {step.get('field_id') or 'vkey=' + str(step.get('vkey'))}")
             else:
                 get_logger().warning(f"Unknown action: {action}")
                 self._on_log(f"Unknown action: {action}")
