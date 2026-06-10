@@ -1,3 +1,4 @@
+import os
 import queue
 import threading
 import time
@@ -293,10 +294,85 @@ class MainWindow(tk.Tk):
                 sap_events = sap_cap.stop()
                 self.after(0, lambda: self._set_running_state(False))
                 self.after(0, lambda: self._status.set("เสร็จสิ้น"))
-                # แสดงปุ่ม Compare เฉพาะเมื่อ loop จบโดยไม่มี error + มี SAP events
                 if success and sap_available and sap_events:
                     self.after(0, lambda: self._show_sap_compare(
                         loop_name, loop_cfg.get("steps", []), sap_events))
+                # เช็ก error log หลัง loop จบ — ถ้ามีแถวพลาดให้ถามรัน retry
+                if loop_cfg.get("on_row_error") == "recover":
+                    _ln, _lc, _rv = loop_name, loop_cfg, runtime_vars
+                    self.after(400, lambda: self._check_and_offer_retry(_ln, _lc, _rv))
+
+        self._bot_thread = threading.Thread(target=run, daemon=True)
+        self._bot_thread.start()
+
+    def _check_and_offer_retry(self, loop_name: str, loop_cfg: dict, runtime_vars: dict):
+        """หลัง loop จบ: ถ้ามีแถวที่พลาดใน error log → ถามว่าจะรันซ้ำไหม"""
+        error_log = loop_cfg.get("error_log_path", "")
+        if not error_log or not os.path.exists(error_log):
+            return
+        from engine.file_writer import read_error_log_row_nums
+        failed = read_error_log_row_nums(error_log)
+        if not failed:
+            return
+        rows_preview = str(sorted(failed)[:10])
+        if len(failed) > 10:
+            rows_preview += "..."
+        ans = messagebox.askyesno(
+            "มีแถวที่พลาด",
+            f"มี {len(failed)} แถวที่ผิดพลาด\nแถว: {rows_preview}\n\n"
+            f"ต้องการรัน {len(failed)} แถวนั้นซ้ำไหม?",
+            parent=self,
+        )
+        if not ans:
+            return
+        try:
+            os.remove(error_log)
+        except Exception:
+            pass
+        self._run_failed_rows(loop_name, loop_cfg, runtime_vars, failed)
+
+    def _run_failed_rows(self, loop_name: str, loop_cfg: dict, runtime_vars: dict, rows_filter: set):
+        """รัน loop เฉพาะแถวใน rows_filter (original CSV row numbers)"""
+        self._interrupt.start()
+        self._set_running_state(True)
+        self._log.clear()
+        self._queue_log(f"Re-run {len(rows_filter)} แถวที่พลาด: {sorted(rows_filter)}", "warn")
+        self._status.set(f"Re-run failed rows: {loop_name}")
+
+        data_source = DataSource(runtime_vars)
+
+        from engine.sap_capture import SapCapture
+        sap_cap = SapCapture()
+        sap_cap.start()
+
+        runner = LoopRunner(
+            interrupt=self._interrupt,
+            on_debug=lambda ctx: self._handle_debug(ctx),
+            on_log=lambda msg: self._queue_log(msg),
+            sap_capture=sap_cap,
+        )
+
+        def run():
+            try:
+                for i in range(START_COUNTDOWN, 0, -1):
+                    if self._interrupt.is_stopped():
+                        return
+                    self._queue_log(f"เริ่มใน {i}...", "warn")
+                    time.sleep(1)
+                runner.run_loop(loop_cfg, data_source, rows_filter=rows_filter)
+                self._queue_log("Re-run เสร็จสิ้น", "ok")
+            except BotStoppedError:
+                self._queue_log("Bot หยุดโดยผู้ใช้", "warn")
+            except Exception as ex:
+                self._queue_log(f"Error: {ex}", "error")
+            finally:
+                sap_cap.stop()
+                self.after(0, lambda: self._set_running_state(False))
+                self.after(0, lambda: self._status.set("เสร็จสิ้น"))
+                # วนเช็กซ้ำถ้ายังมีแถวพลาดอีก
+                if loop_cfg.get("on_row_error") == "recover":
+                    _ln, _lc, _rv = loop_name, loop_cfg, runtime_vars
+                    self.after(400, lambda: self._check_and_offer_retry(_ln, _lc, _rv))
 
         self._bot_thread = threading.Thread(target=run, daemon=True)
         self._bot_thread.start()

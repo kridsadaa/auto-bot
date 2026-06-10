@@ -43,6 +43,32 @@ def _append_csv(path: str, values: list, header: list = None):
         writer.writerow(values)
 
 
+def append_error_log(path: str, row_num: int, error_msg: str):
+    """บันทึกแถวที่พลาดลงไฟล์ error log — ใช้กับ on_row_error=recover"""
+    from datetime import datetime
+    values = [row_num, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), error_msg]
+    header = ["row_num", "timestamp", "error"]
+    append_row(path, values, header)
+
+
+def read_error_log_row_nums(path: str) -> set[int]:
+    """อ่านหมายเลขแถวจาก error log — คืน set[int] ของ row_num ที่พลาด"""
+    try:
+        import pandas as pd
+        df = pd.read_csv(path, dtype=str)
+        if "row_num" not in df.columns:
+            return set()
+        result = set()
+        for v in df["row_num"].dropna():
+            s = str(v).strip()
+            if s.lstrip("-").isdigit():
+                result.add(int(float(s)))
+        return result
+    except Exception as e:
+        get_logger().warning(f"read_error_log_row_nums('{path}'): {e}")
+        return set()
+
+
 def _append_xlsx(path: str, values: list, header: list = None):
     try:
         from openpyxl import Workbook, load_workbook

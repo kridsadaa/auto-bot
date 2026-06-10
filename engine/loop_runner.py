@@ -42,13 +42,16 @@ class LoopRunner:
         self._sap_capture = sap_capture
         actions.set_log_callback(self._on_log)
 
-    def run_loop(self, loop_config: dict, data_source: DataSource):
+    def run_loop(self, loop_config: dict, data_source: DataSource,
+                 rows_filter: set[int] = None):
+        """rows_filter: รัน CSV เฉพาะแถวใน set นี้ (1-indexed ต้นฉบับ) — None = ทั้งหมด"""
         steps = loop_config.get("steps", [])
         csv_path = loop_config.get("data_source")
-        # รูป error ที่ถ้าเจอระหว่างทำงาน ให้หยุดทันที (เช็กก่อนทุก step)
         self._error_guards = loop_config.get("error_guards", []) or []
-        # นโยบายเมื่อ "แถว" ทำงานพลาด: "stop" (default) = หยุดทั้งงาน, "skip" = ข้ามไปแถวถัดไป
+        # นโยบายเมื่อแถวพลาด: stop / skip / recover
         on_row_error = str(loop_config.get("on_row_error", "stop")).lower()
+        recovery_steps = loop_config.get("recovery_steps", []) or []
+        error_log_path = loop_config.get("error_log_path", "")
 
         # ตัวแปรเฉพาะ loop (loop-scoped) — override global เฉพาะตัวที่ "มีค่า"
         # ค่าว่าง (เช่น loop ที่เพิ่ง import มายังไม่กรอก) จะ fall through ไปใช้ค่า global เดิม
@@ -66,16 +69,14 @@ class LoopRunner:
                 get_logger().info(f"Loop variables override global: {overridden}")
 
         if csv_path:
-            ds = DataSource(base_static, csv_path)
-            row_num = 0
+            ds = DataSource(base_static, csv_path, rows_filter=rows_filter)
             while ds.has_next_row():
-                row_num += 1
                 ds.next_row()
+                row_num = ds.current_original_row_num()
                 get_logger().info(f"--- CSV row {row_num} ---")
                 try:
                     self._execute_steps(steps, ds)
                 except SkipRowSignal as e:
-                    # ตั้งใจข้ามแถวนี้ — ไปแถวถัดไปเสมอ ไม่ว่า on_row_error เป็นอะไร
                     self._on_log(f"⏭️ ข้ามแถว {row_num}: {e}")
                     get_logger().info(f"Row {row_num} skipped: {e}")
                     continue
@@ -83,6 +84,25 @@ class LoopRunner:
                     if on_row_error == "skip":
                         self._on_log(f"⚠️ แถว {row_num} ผิดพลาด — ข้ามไปแถวถัดไป: {e}")
                         get_logger().error(f"Row {row_num} failed (skipped): {e}")
+                        continue
+                    if on_row_error == "recover":
+                        self._on_log(f"⚠️ แถว {row_num} ผิดพลาด — กำลังกู้คืน: {e}")
+                        get_logger().error(f"Row {row_num} failed (recover): {e}")
+                        if error_log_path:
+                            from engine.file_writer import append_error_log
+                            try:
+                                append_error_log(error_log_path, row_num, str(e))
+                            except Exception as log_err:
+                                get_logger().warning(f"เขียน error log ไม่สำเร็จ: {log_err}")
+                        if recovery_steps:
+                            try:
+                                self._execute_steps(recovery_steps, ds)
+                                self._on_log("↩️ Recovery เสร็จ — ไปแถวถัดไป")
+                            except BotStoppedError:
+                                raise
+                            except Exception as re_err:
+                                self._on_log(f"⚠️ Recovery steps พลาดด้วย: {re_err}")
+                                get_logger().error(f"Recovery failed for row {row_num}: {re_err}")
                         continue
                     raise  # on_row_error=stop → หยุดทั้งงาน
                 # BotStoppedError (ผู้ใช้/stop_if_image/error_guard) ไม่ถูกจับ → หยุดทั้งงานเสมอ

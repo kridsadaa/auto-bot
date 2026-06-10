@@ -12,14 +12,26 @@ class DataSourceError(Exception):
 
 
 class DataSource:
-    def __init__(self, static_vars: dict[str, str], csv_path: str = None):
+    def __init__(self, static_vars: dict[str, str], csv_path: str = None,
+                 rows_filter: set[int] = None):
+        """rows_filter: set ของ row number ต้นฉบับ (1-indexed) ที่ต้องการรัน (None = ทั้งหมด)"""
         self._static = dict(static_vars)
         self._csv_path = csv_path
         self._csv_rows: list[dict] = []
+        self._csv_original_nums: list[int] = []
         self._csv_index = 0
 
         if csv_path:
-            self._csv_rows = self._load_rows(csv_path)
+            all_rows = self._load_rows(csv_path)
+            if rows_filter:
+                for i, row in enumerate(all_rows, 1):
+                    if i in rows_filter:
+                        self._csv_rows.append(row)
+                        self._csv_original_nums.append(i)
+                get_logger().info(f"rows_filter: {len(self._csv_rows)}/{len(all_rows)} rows selected")
+            else:
+                self._csv_rows = all_rows
+                self._csv_original_nums = list(range(1, len(all_rows) + 1))
 
     @staticmethod
     def read_headers(path: str) -> list:
@@ -75,6 +87,14 @@ class DataSource:
         if self._csv_index == 0:
             return None
         return self._csv_rows[self._csv_index - 1]
+
+    def current_original_row_num(self) -> int:
+        """หมายเลขแถวต้นฉบับใน CSV (1-indexed) — ถูกต้องแม้ใช้ rows_filter"""
+        if self._csv_index == 0:
+            return 0
+        if self._csv_original_nums:
+            return self._csv_original_nums[self._csv_index - 1]
+        return self._csv_index
 
     def resolve(self, template: str) -> str:
         def replacer(m: re.Match) -> str:

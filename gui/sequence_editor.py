@@ -1084,13 +1084,18 @@ class CaseDialog(tk.Toplevel):
 # ─── Loop Settings Dialog ────────────────────────────────────────────────────
 
 class LoopSettingsDialog(tk.Toplevel):
-    def __init__(self, parent, loop_name: str, loop_config: dict):
+    def __init__(self, parent, loop_name: str, loop_config: dict,
+                 csv_columns: list = None, variables: list = None, capture_dir: str = "elements"):
         super().__init__(parent)
         self.title(f"ตั้งค่า Loop: {loop_name}")
-        self.resizable(False, False)
+        self.resizable(True, True)
         self.grab_set()
         self._result = None
         self._cfg = dict(loop_config)
+        self._csv_columns = csv_columns or []
+        self._variables = variables or []
+        self._capture_dir = capture_dir or "elements"
+        self._recovery_steps = copy.deepcopy(loop_config.get("recovery_steps", []) or [])
         self._build()
         self._center()
 
@@ -1109,15 +1114,60 @@ class LoopSettingsDialog(tk.Toplevel):
         row2.pack(fill="x", **pad)
         tk.Label(row2, text="ถ้าแถวพลาด:", width=18, anchor="w").pack(side="left")
         self._row_err_var = tk.StringVar(value=self._cfg.get("on_row_error", "stop"))
-        ttk.Combobox(row2, textvariable=self._row_err_var, values=["stop", "skip"],
-                     state="readonly", width=12).pack(side="left", padx=4)
-        tk.Label(self, text="  stop = หยุดทั้งงาน / skip = ข้ามแถวที่ error ไปทำแถวถัดไป",
+        self._err_combo = ttk.Combobox(
+            row2, textvariable=self._row_err_var,
+            values=["stop", "skip", "recover"], state="readonly", width=12,
+        )
+        self._err_combo.pack(side="left", padx=4)
+        self._err_combo.bind("<<ComboboxSelected>>", lambda e: self._on_policy_change())
+        tk.Label(self, text="  stop = หยุดทั้งงาน / skip = ข้ามแถว / recover = กู้คืนอัตโนมัติ",
                  fg="gray", font=("Segoe UI", 8)).pack(anchor="w", padx=12)
+
+        # ─── Recover section (show/hide ตาม dropdown) ─────────────────────────
+        self._recover_frame = tk.LabelFrame(
+            self, text="การกู้คืนอัตโนมัติ (recover mode)",
+            fg="#0e639c", font=("Segoe UI", 9, "bold"),
+        )
+
+        el_row = tk.Frame(self._recover_frame)
+        el_row.pack(fill="x", padx=8, pady=4)
+        tk.Label(el_row, text="บันทึก error ที่:", width=18, anchor="w").pack(side="left")
+        self._error_log_var = tk.StringVar(value=self._cfg.get("error_log_path", "data/errors.csv"))
+        tk.Entry(el_row, textvariable=self._error_log_var, width=28).pack(side="left", padx=4)
+        tk.Button(el_row, text="Browse", command=self._browse_error_log).pack(side="left")
+        tk.Label(
+            self._recover_frame,
+            text="  ไฟล์บันทึกแถวที่พลาด (row_num, timestamp, error) — สร้างอัตโนมัติ",
+            fg="gray", font=("Segoe UI", 8),
+        ).pack(anchor="w", padx=8)
+
+        NestedStepsEditor(
+            self._recover_frame, self._recovery_steps,
+            "Recovery Steps — รันเมื่อแถวพลาด (เช่น กด ESC, คลิกกลับหน้าแรก SAP):",
+            height=5,
+            csv_columns=self._csv_columns,
+            variables=self._variables,
+            capture_dir=self._capture_dir,
+        ).pack(fill="both", expand=True, padx=8, pady=(4, 8))
+        # ──────────────────────────────────────────────────────────────────────
 
         btn = tk.Frame(self)
         btn.pack(pady=10)
         tk.Button(btn, text="บันทึก", width=10, bg="#4ec9b0", command=self._save).pack(side="left", padx=6)
         tk.Button(btn, text="ยกเลิก", width=10, command=self.destroy).pack(side="left", padx=6)
+
+        self._on_policy_change()
+
+    def _on_policy_change(self):
+        if self._row_err_var.get() == "recover":
+            # วาง recover_frame ก่อน btn frame (ปุ่ม Save อยู่ท้าย)
+            btn_frame = self.winfo_children()[-1]
+            self._recover_frame.pack(fill="both", expand=True, padx=12, pady=4,
+                                     before=btn_frame)
+            self.minsize(540, 480)
+        else:
+            self._recover_frame.pack_forget()
+            self.minsize(0, 0)
 
     def _browse_csv(self):
         path = filedialog.askopenfilename(
@@ -1127,6 +1177,15 @@ class LoopSettingsDialog(tk.Toplevel):
         if path:
             self._csv_var.set(os.path.relpath(path))
 
+    def _browse_error_log(self):
+        path = filedialog.asksaveasfilename(
+            title="ไฟล์บันทึก error", initialdir="data",
+            defaultextension=".csv",
+            filetypes=[("CSV", "*.csv"), ("All", "*.*")],
+        )
+        if path:
+            self._error_log_var.set(os.path.relpath(path))
+
     def _save(self):
         self._result = dict(self._cfg)
         csv_val = self._csv_var.get().strip()
@@ -1134,11 +1193,24 @@ class LoopSettingsDialog(tk.Toplevel):
             self._result["data_source"] = csv_val
         else:
             self._result.pop("data_source", None)
-        # เขียน on_row_error เฉพาะเมื่อเลือก skip (stop เป็น default — ไม่ต้องรก config)
-        if self._row_err_var.get() == "skip":
-            self._result["on_row_error"] = "skip"
+
+        err_policy = self._row_err_var.get()
+        if err_policy in ("skip", "recover"):
+            self._result["on_row_error"] = err_policy
         else:
             self._result.pop("on_row_error", None)
+
+        el = self._error_log_var.get().strip()
+        if el:
+            self._result["error_log_path"] = el
+        else:
+            self._result.pop("error_log_path", None)
+
+        if self._recovery_steps:
+            self._result["recovery_steps"] = self._recovery_steps
+        else:
+            self._result.pop("recovery_steps", None)
+
         self.destroy()
 
     def _center(self):
@@ -1584,7 +1656,12 @@ class SequenceEditor(tk.Toplevel):
         if not self._selected_loop:
             return
         loop_cfg = self._config["loops"][self._selected_loop]
-        dlg = LoopSettingsDialog(self, self._selected_loop, loop_cfg)
+        dlg = LoopSettingsDialog(
+            self, self._selected_loop, loop_cfg,
+            csv_columns=self._loop_csv_columns(),
+            variables=self._loop_variables(),
+            capture_dir=self._loop_capture_dir(),
+        )
         self.wait_window(dlg)
         if dlg.get_result() is not None:
             self._config["loops"][self._selected_loop] = dlg.get_result()
