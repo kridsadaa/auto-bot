@@ -158,6 +158,8 @@ class LoopRunner:
             if dec == "restart":
                 self._on_log("↩️ Restart — เริ่มลำดับนี้ใหม่")
                 return 0
+            if dec == "skip_row":
+                self._annotate_and_skip_row(steps[i], i, error, data_source)
             if dec == "inject":
                 inject = d.get("steps", []) or []
                 self._on_log(f"💉 Inject {len(inject)} step แล้ว {d.get('then', 'retry')}")
@@ -174,6 +176,50 @@ class LoopRunner:
             raise BotStoppedError()
         # (3) ไม่มี handler (เช่น headless) → โยนต่อให้ run_loop จัดการตาม on_row_error
         raise error
+
+    def _annotate_and_skip_row(self, step: dict, step_idx: int, error: Exception,
+                               data_source: DataSource):
+        """บันทึก error + screenshot ลง CSV แล้ว raise SkipRowSignal"""
+        import os
+        from datetime import datetime
+
+        # ── screenshot ──────────────────────────────────────────────────────
+        screenshot = getattr(error, "current_screenshot", None)
+        if screenshot is None:
+            try:
+                import pyautogui
+                screenshot = pyautogui.screenshot()
+            except Exception:
+                pass
+
+        screenshot_path = ""
+        csv_path = data_source.csv_path
+        if screenshot is not None:
+            try:
+                base_dir = os.path.dirname(os.path.abspath(csv_path)) if csv_path else "."
+                errors_dir = os.path.join(base_dir, "errors")
+                os.makedirs(errors_dir, exist_ok=True)
+                row_num = data_source.current_original_row_num()
+                ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                screenshot_path = os.path.join(errors_dir, f"error_row{row_num}_{ts}.png")
+                screenshot.save(screenshot_path)
+                self._on_log(f"📸 Screenshot: {screenshot_path}")
+            except Exception as e:
+                get_logger().warning(f"screenshot save failed: {e}")
+
+        # ── annotate CSV ─────────────────────────────────────────────────────
+        if csv_path:
+            row_num = data_source.current_original_row_num()
+            action = step.get("action", "?")
+            target = step.get("target") or step.get("text") or step.get("key") or ""
+            step_info = f"Step {step_idx + 1}: {action}"
+            if target:
+                step_info += f" ({target})"
+            from engine.file_writer import annotate_csv_row_error
+            annotate_csv_row_error(csv_path, row_num, str(error), step_info, screenshot_path)
+            self._on_log(f"📝 บันทึก error ใน CSV แถว {row_num}")
+
+        raise SkipRowSignal(f"ข้าม row (debug console) — {error}")
 
     def _check_error_guards(self):
         """ถ้าเจอรูป error ที่กำหนดไว้บนจอ → หยุดบอททันที"""

@@ -68,6 +68,10 @@ class DataSource:
         except Exception as e:
             raise DataSourceError(f"Failed to read '{path}': {e}") from e
 
+    @property
+    def csv_path(self) -> str | None:
+        return self._csv_path
+
     def set_runtime(self, key: str, value: str):
         self._static[key] = value
 

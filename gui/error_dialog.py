@@ -123,6 +123,8 @@ class DebugConsole(tk.Toplevel):
                   command=lambda: self._done("skip")).pack(side="left", padx=4)
         tk.Button(bar, text="↩ Restart Row", width=12,
                   command=lambda: self._done("restart")).pack(side="left", padx=4)
+        tk.Button(bar, text="⏩ ข้าม Row", width=11, bg="#c586c0", fg="white",
+                  command=lambda: self._done("skip_row")).pack(side="left", padx=4)
         tk.Button(bar, text="⏹ Stop", width=9, bg="#f44747", fg="white",
                   command=lambda: self._done("stop")).pack(side="left", padx=4)
 

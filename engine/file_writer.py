@@ -69,6 +69,48 @@ def read_error_log_row_nums(path: str) -> set[int]:
         return set()
 
 
+def annotate_csv_row_error(csv_path: str, row_num: int, error_msg: str,
+                           step_info: str, screenshot_path: str = ""):
+    """เขียนข้อมูล error ลงใน row ที่กำหนดของ CSV/XLSX (in-place)
+    เพิ่มคอลัมน์ error_status / error_step / error_message / error_screenshot ถ้ายังไม่มี
+    row_num: 1-indexed (นับเฉพาะแถวข้อมูล ไม่นับ header)
+    """
+    import pandas as pd
+    ext = os.path.splitext(csv_path)[1].lower()
+    try:
+        if ext in (".xlsx", ".xls", ".xlsm"):
+            df = pd.read_excel(csv_path, dtype=str)
+        else:
+            df = pd.read_csv(csv_path, dtype=str)
+    except Exception as e:
+        get_logger().warning(f"annotate_csv_row_error: อ่าน '{csv_path}' ไม่สำเร็จ: {e}")
+        return
+
+    idx = row_num - 1
+    if idx < 0 or idx >= len(df):
+        get_logger().warning(f"annotate_csv_row_error: row_num {row_num} out of range (len={len(df)})")
+        return
+
+    for col in ("error_status", "error_step", "error_message", "error_screenshot"):
+        if col not in df.columns:
+            df[col] = ""
+
+    df = df.fillna("")
+    df.loc[idx, "error_status"] = "error"
+    df.loc[idx, "error_step"] = step_info
+    df.loc[idx, "error_message"] = error_msg
+    df.loc[idx, "error_screenshot"] = screenshot_path
+
+    try:
+        if ext in (".xlsx", ".xlsm"):
+            df.to_excel(csv_path, index=False)
+        else:
+            df.to_csv(csv_path, index=False, encoding="utf-8-sig")
+        get_logger().info(f"annotate_csv_row_error: row {row_num} → '{csv_path}'")
+    except Exception as e:
+        get_logger().warning(f"annotate_csv_row_error: เขียน '{csv_path}' ไม่สำเร็จ: {e}")
+
+
 def _append_xlsx(path: str, values: list, header: list = None):
     try:
         from openpyxl import Workbook, load_workbook
