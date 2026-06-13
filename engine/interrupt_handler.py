@@ -47,6 +47,11 @@ class InterruptHandler:
     def request_stop(self):
         self._stopped = True
 
+    def clear_stop(self):
+        """ล้าง stop flag — เรียกเมื่อผู้ใช้ตัดสินใจ continue จาก Debug Console
+        (กรณี ESC ถูกกดโดยไม่ตั้งใจขณะ dialog เปิดอยู่)"""
+        self._stopped = False
+
     def wait_if_paused(self):
         """เรียกใน loop — block จนกว่าจะ resume หรือ stop"""
         import time

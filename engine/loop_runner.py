@@ -147,6 +147,10 @@ class LoopRunner:
         if self._on_debug:
             d = self._on_debug(self._debug_context(steps[i], i, error)) or {}
             dec = d.get("decision", "skip")
+            if dec == "stop":
+                raise BotStoppedError(d.get("message", "หยุดจาก Debug Console"))
+            # ผู้ใช้เลือก continue — clear stop flag เผื่อ ESC ถูกกดโดยไม่ตั้งใจขณะ dialog เปิด
+            self._interrupt.clear_stop()
             if dec == "retry":
                 return i
             if dec == "skip":
@@ -154,8 +158,6 @@ class LoopRunner:
             if dec == "restart":
                 self._on_log("↩️ Restart — เริ่มลำดับนี้ใหม่")
                 return 0
-            if dec == "stop":
-                raise BotStoppedError(d.get("message", "หยุดจาก Debug Console"))
             if dec == "inject":
                 inject = d.get("steps", []) or []
                 self._on_log(f"💉 Inject {len(inject)} step แล้ว {d.get('then', 'retry')}")
