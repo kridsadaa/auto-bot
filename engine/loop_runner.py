@@ -31,6 +31,8 @@ class LoopRunner:
         on_log: Callable[[str], None] = None,
         on_debug: Callable[[dict], dict] = None,
         sap_capture=None,  # SapCapture instance (optional) — shadow record ระหว่างรัน
+        ai_heal: bool = False,
+        ai_heal_timeout: int = 60,
     ):
         self._interrupt = interrupt
         self._on_image_not_found = on_image_not_found
@@ -40,6 +42,8 @@ class LoopRunner:
         self._on_log = on_log or print
         self._error_guards: list = []
         self._sap_capture = sap_capture
+        self._ai_heal = ai_heal
+        self._ai_heal_timeout = ai_heal_timeout
         actions.set_log_callback(self._on_log)
 
     def run_loop(self, loop_config: dict, data_source: DataSource,
@@ -143,6 +147,22 @@ class LoopRunner:
 
     def _recover(self, steps: list, i: int, error: Exception, data_source: DataSource) -> int:
         """ตัดสินใจกู้คืนเมื่อ step ที่ index i พลาด → คืน index ถัดไป (หรือ raise BotStoppedError)"""
+        # (0) AI self-heal — ลองให้ Claude Code หาตำแหน่ง element ให้ก่อน
+        if self._ai_heal and isinstance(error, ImageNotFoundError):
+            from engine import ai_healer
+            self._on_log(f"🤖 AI heal: กำลังให้ Claude วิเคราะห์หน้าจอ — รอ {self._ai_heal_timeout}s...")
+            coords = ai_healer.request_heal(
+                error.template_path,
+                error.current_screenshot,
+                timeout=self._ai_heal_timeout,
+            )
+            if coords is not None:
+                x, y = coords
+                self._on_log(f"🤖 AI heal: คลิก ({x}, {y}) แทน template matching")
+                actions.click(x, y)
+                return i + 1
+            self._on_log("🤖 AI heal: ไม่พบ element — ส่งต่อให้ Debug Console")
+
         # (1) Debug Console แบบ interactive
         if self._on_debug:
             d = self._on_debug(self._debug_context(steps[i], i, error)) or {}

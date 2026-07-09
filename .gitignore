@@ -31,3 +31,7 @@ dist/
 
 # Internal concept/analysis notes (เก็บเฉพาะเครื่อง ไม่ขึ้น repo สาธารณะ)
 concepts/
+
+# AI self-heal runtime state (screenshot ของจอจริง — ไม่ควรขึ้น git)
+ai_heal/
+ai_heal_test_before.png

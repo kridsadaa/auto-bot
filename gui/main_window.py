@@ -268,11 +268,14 @@ class MainWindow(tk.Tk):
         if sap_available:
             self._queue_log("🔍 SAP Shadow Capture เริ่มแล้ว (จะแสดง Compare เมื่อจบ)", "info")
 
+        ai_heal_cfg = self._config.get("ai_heal", {})
         runner = LoopRunner(
             interrupt=self._interrupt,
             on_debug=lambda ctx: self._handle_debug(ctx),
             on_log=lambda msg: self._queue_log(msg),
             sap_capture=sap_cap,
+            ai_heal=bool(ai_heal_cfg.get("enabled", False)),
+            ai_heal_timeout=int(ai_heal_cfg.get("timeout", 60)),
         )
 
         def run():
@@ -345,11 +348,14 @@ class MainWindow(tk.Tk):
         sap_cap = SapCapture()
         sap_cap.start()
 
+        _ai = self._config.get("ai_heal", {})
         runner = LoopRunner(
             interrupt=self._interrupt,
             on_debug=lambda ctx: self._handle_debug(ctx),
             on_log=lambda msg: self._queue_log(msg),
             sap_capture=sap_cap,
+            ai_heal=bool(_ai.get("enabled", False)),
+            ai_heal_timeout=int(_ai.get("timeout", 60)),
         )
 
         def run():
@@ -427,10 +433,13 @@ class MainWindow(tk.Tk):
             self._start_copilot_mode(data_source)
 
     def _start_agent_mode(self, data_source: DataSource):
+        _ai = self._config.get("ai_heal", {})
         runner = LoopRunner(
             interrupt=self._interrupt,
             on_debug=lambda ctx: self._handle_debug(ctx),
             on_log=lambda msg: self._queue_log(msg),
+            ai_heal=bool(_ai.get("enabled", False)),
+            ai_heal_timeout=int(_ai.get("timeout", 60)),
         )
         states = self._config.get("states", [])
         loops = self._config.get("loops", {})
@@ -473,10 +482,13 @@ class MainWindow(tk.Tk):
 
     def _start_copilot_mode(self, data_source: DataSource):
         self._status.set("Copilot Mode — รอ state ถัดไป...")
+        _ai = self._config.get("ai_heal", {})
         runner = LoopRunner(
             interrupt=self._interrupt,
             on_debug=lambda ctx: self._handle_debug(ctx),
             on_log=lambda msg: self._queue_log(msg),
+            ai_heal=bool(_ai.get("enabled", False)),
+            ai_heal_timeout=int(_ai.get("timeout", 60)),
         )
         states = self._config.get("states", [])
         loops = self._config.get("loops", {})
