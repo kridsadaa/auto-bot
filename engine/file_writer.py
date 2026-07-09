@@ -77,8 +77,13 @@ def annotate_csv_row_error(csv_path: str, row_num: int, error_msg: str,
     """
     import pandas as pd
     ext = os.path.splitext(csv_path)[1].lower()
+    if ext == ".xls":
+        # เขียน .xls (รูปแบบเก่า) ไม่ได้ — pandas/openpyxl ไม่รองรับ (ต้องการ xlwt ที่เลิกดูแลแล้ว)
+        # เขียนต่อด้วย to_excel/to_csv จะได้ไฟล์ผิด format จนเปิดไม่ขึ้น จึงข้ามแทนที่จะทำไฟล์พัง
+        get_logger().warning(f"annotate_csv_row_error: ไม่รองรับไฟล์ .xls '{csv_path}' — ข้าม (ใช้ .xlsx แทน)")
+        return
     try:
-        if ext in (".xlsx", ".xls", ".xlsm"):
+        if ext in (".xlsx", ".xlsm"):
             df = pd.read_excel(csv_path, dtype=str)
         else:
             df = pd.read_csv(csv_path, dtype=str)

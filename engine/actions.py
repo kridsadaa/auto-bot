@@ -106,14 +106,17 @@ def type_text(text: str, interval: float = 0.05, method: str = "paste", clear: b
       - "paste" (default): วางผ่าน clipboard (Ctrl+V) — เร็ว/ชัวร์กับ SAP & เดสก์ท็อปแอป
                            ถ้า clipboard ใช้ไม่ได้ จะ fallback เป็นการจำลองคีย์ให้เอง
       - "type" / "keys":   จำลองการกดคีย์ทีละตัว (เหมือนพิมพ์มือ) — ใช้กับแอป/ฟิลด์ที่บล็อก paste
-    clear=True: เคลียร์ค่าเดิมในช่องก่อน (Ctrl+A → Delete) กันค่าค้าง/ต่อกัน เช่นช่อง SAP ที่จำค่าเก่า
+    clear=True: เคลียร์ค่าเดิมในช่องก่อน (End → Shift+Home → Delete) กันค่าค้าง/ต่อกัน เช่นช่อง SAP ที่จำค่าเก่า
     """
     if clear:
-        _log("Clear field (Ctrl+A, Delete)")
-        pyautogui.hotkey("ctrl", "a")
-        time.sleep(0.05)
+        # ใช้ named keys (end/home/shift/delete) แทน 'ctrl+a' — ตัวอักษร 'a' ผ่าน VkKeyScan
+        # ซึ่งพังเมื่อ keyboard layout เป็นไทย (Kedmanee) ทำให้ select-all เงียบ ไม่ล้างค่าเดิม
+        _log("Clear field (End, Shift+Home, Delete)")
+        pyautogui.press("end")
+        pyautogui.hotkey("shift", "home")
+        time.sleep(0.15)
         pyautogui.press("delete")
-        time.sleep(0.05)
+        time.sleep(0.15)
     _log(f"Type ({method}): {repr(text)}")
     if method in ("type", "keys"):
         keyboard.write(text, delay=interval)
@@ -205,10 +208,10 @@ def set_element_text(selector: dict, text: str, timeout: float = 10):
     _log(f"Set element text: {selector} = {repr(text)}")
     el = ui_element.find_element(selector, timeout)
     try:
-        el.set_edit_text(text)  # เร็ว/ชัวร์สำหรับ Edit control
+        el.set_edit_text(text)  # เร็ว/ชัวร์สำหรับ Edit control — แทนที่ค่าเดิมทั้งหมดอยู่แล้ว
     except Exception:
         el.click_input()        # fallback: โฟกัสแล้วพิมพ์
-        type_text(text)
+        type_text(text, clear=True)  # clear=True กันค่าเดิมค้าง/ต่อกัน (set_edit_text แทนที่ทั้งหมด)
 
 
 @_safe
