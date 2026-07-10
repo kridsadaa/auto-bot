@@ -31,8 +31,18 @@ class SapFieldError(Exception):
 
 
 def _get_session(connection_idx: int = 0, session_idx: int = 0):
-    """ดึง SAP GUI session ที่เปิดอยู่ — raise SapNotAvailableError ถ้าเชื่อมไม่ได้"""
+    """ดึง SAP GUI session ที่เปิดอยู่ — raise SapNotAvailableError ถ้าเชื่อมไม่ได้
+
+    COM ต้อง CoInitialize ในทุก thread ที่จะใช้มันก่อน (ไม่ใช่แค่ thread ที่สร้าง object)
+    ฟังก์ชันนี้ถูกเรียกได้ทั้งจาก main thread (SequenceEditor/StepDialog picker) และจาก
+    bot thread (LoopRunner._execute_step) — เรียก CoInitialize() แบบ idempotent กันไว้เผื่อ
+    thread นั้นยังไม่เคย init (เรียกซ้ำใน thread เดิมไม่พัง แค่เป็น no-op)"""
     try:
+        import pythoncom
+        try:
+            pythoncom.CoInitialize()
+        except Exception:
+            pass  # init ไปแล้วในเธรดนี้ หรือไม่มี pythoncom — ปล่อยผ่าน ไม่ critical
         import win32com.client as win32
         sap_gui = win32.GetObject("SAPGUI")
         if not sap_gui:
@@ -108,22 +118,28 @@ def sap_press(field_id: str = None, vkey: int | str = None,
 
 
 def pick_field_id(timeout: float = 30) -> str | None:
-    """เปิด SAP ในโหมด "จิ้มเลย" — รอให้ผู้ใช้คลิก field ใน SAP แล้วคืน element ID
-    ใช้ script recording API ของ SAP เพื่อจับ event ที่เกิดขึ้น
+    """เปิดโหมด "จิ้มเลย" — รอให้ผู้ใช้คลิก field ใหม่ใน SAP แล้วคืน element ID
+    จับ focus ตอนเริ่ม (baseline) ไว้ก่อน แล้ว poll จนกว่า focus จะเปลี่ยนไปเป็น field
+    อื่นจริงๆ (ไม่ใช่แค่เช็คว่ามี focus อยู่ — SAP แทบมี element โฟกัสอยู่ตลอดเวลาอยู่แล้ว
+    ถ้าไม่เทียบกับ baseline จะได้ field เดิมที่ค้าง focus อยู่ก่อนเปิดตัวจิ้มเสมอ)
     คืน None ถ้า timeout หรือ scripting ไม่พร้อม
     """
     try:
         sess = _get_session()
-        # เปิด recording สั้นๆ แล้วจับ event แรกที่เกิด
-        sess.record(True)
-        deadline = time.time() + timeout
-        while time.time() < deadline:
-            time.sleep(0.2)
-            history = sess.ActiveWindow.GuiFocus if hasattr(sess, "ActiveWindow") else None
-            if history:
-                sess.record(False)
-                return str(history.Id)
-        sess.record(False)
-        return None
     except Exception:
         return None
+
+    def current_focus_id() -> str | None:
+        try:
+            return str(sess.ActiveWindow.GuiFocus.Id)
+        except Exception:
+            return None
+
+    baseline_id = current_focus_id()
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        time.sleep(0.2)
+        fid = current_focus_id()
+        if fid and fid != baseline_id:
+            return fid
+    return None

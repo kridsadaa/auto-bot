@@ -25,18 +25,32 @@ def _click_point(max_loc, template, offset: tuple = None) -> tuple[int, int]:
     return (max_loc[0] + w // 2, max_loc[1] + h // 2)
 
 
+def capture_screen() -> np.ndarray:
+    """ถ่ายภาพหน้าจอทั้งจอเป็น BGR array — ใช้ส่งเข้า find_on_screen(screen=...)
+    เพื่อถ่ายครั้งเดียวแล้ว match หลาย template กับภาพเดียวกัน (เร็วกว่า + สอดคล้องกัน)"""
+    screenshot = pyautogui.screenshot()
+    return cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR)
+
+
 def find_on_screen(
     template_path: str,
     confidence: float = 0.85,
     region: tuple = None,
     offset: tuple = None,
+    screen: np.ndarray = None,
 ) -> tuple[int, int] | None:
     """
     ค้นหา template image บนหน้าจอ
     คืนค่า (x, y) จุดที่จะคลิก (กลางรูป หรือ offset ที่กำหนด) หรือ None ถ้าไม่เจอ
+    screen: ภาพหน้าจอ (BGR) ที่ถ่ายไว้แล้วจาก capture_screen() — ไม่ส่ง = ถ่ายใหม่เอง
     """
-    screenshot = pyautogui.screenshot(region=region)
-    screen_np = cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR)
+    if screen is not None:
+        screen_np = screen if region is None else screen[
+            region[1]:region[1]+region[3], region[0]:region[0]+region[2]
+        ]
+    else:
+        screenshot = pyautogui.screenshot(region=region)
+        screen_np = cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR)
 
     template = cv2.imread(template_path)
     if template is None:

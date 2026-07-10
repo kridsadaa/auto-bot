@@ -5,6 +5,9 @@ import os
 
 import pyautogui
 
+from gui.tooltip import add_tooltip
+from gui.tooltip_texts import ERROR_DIALOG as TT
+
 
 THUMB_SIZE = (320, 200)
 
@@ -97,13 +100,19 @@ class DebugConsole(tk.Toplevel):
         row = tk.Frame(wrap)
         row.pack(fill="x", padx=6, pady=4)
         self._inj_action = tk.StringVar(value="key")
-        ttk.Combobox(row, textvariable=self._inj_action, values=INJECT_ACTIONS,
-                     state="readonly", width=8).pack(side="left", padx=2)
+        inj_action_combo = ttk.Combobox(row, textvariable=self._inj_action, values=INJECT_ACTIONS,
+                     state="readonly", width=8)
+        inj_action_combo.pack(side="left", padx=2)
+        add_tooltip(inj_action_combo, TT["inject_action"])
         self._inj_value = tk.StringVar(value="enter")
-        tk.Entry(row, textvariable=self._inj_value, width=18).pack(side="left", padx=2)
+        inj_value_entry = tk.Entry(row, textvariable=self._inj_value, width=18)
+        inj_value_entry.pack(side="left", padx=2)
+        add_tooltip(inj_value_entry, TT["inject_value"])
         tk.Label(row, text="key: ชื่อคีย์ · click: x,y · wait: วินาที",
                  fg="gray", font=("Segoe UI", 8)).pack(side="left", padx=4)
-        tk.Button(row, text="+ เพิ่ม", command=self._add_inject).pack(side="right", padx=4)
+        btn_inject_add = tk.Button(row, text="+ เพิ่ม", command=self._add_inject)
+        btn_inject_add.pack(side="right", padx=4)
+        add_tooltip(btn_inject_add, TT["inject_add"])
 
         self._inj_list = tk.Listbox(wrap, height=3, font=("Consolas", 9),
                                     bg="#1e1e1e", fg="#d4d4d4", relief="flat")
@@ -113,20 +122,34 @@ class DebugConsole(tk.Toplevel):
         bar = tk.Frame(self)
         bar.pack(pady=10)
         if is_img and self._ctx.get("template_path"):
-            tk.Button(bar, text="📷 Recapture", width=12, bg="#0e639c", fg="white",
-                      command=self._recapture).pack(side="left", padx=4)
-        tk.Button(bar, text="↻ Retry", width=10, bg="#4ec9b0",
-                  command=lambda: self._done("retry")).pack(side="left", padx=4)
-        tk.Button(bar, text="⤼ Inject & Retry", width=14, bg="#dcdcaa",
-                  command=self._inject_and_retry).pack(side="left", padx=4)
-        tk.Button(bar, text="⏭ ข้าม Step", width=11,
-                  command=lambda: self._done("skip")).pack(side="left", padx=4)
-        tk.Button(bar, text="↩ Restart Row", width=12,
-                  command=lambda: self._done("restart")).pack(side="left", padx=4)
-        tk.Button(bar, text="⏩ ข้าม Row", width=11, bg="#c586c0", fg="white",
-                  command=lambda: self._done("skip_row")).pack(side="left", padx=4)
-        tk.Button(bar, text="⏹ Stop", width=9, bg="#f44747", fg="white",
-                  command=lambda: self._done("stop")).pack(side="left", padx=4)
+            btn_recapture = tk.Button(bar, text="📷 Recapture", width=12, bg="#0e639c", fg="white",
+                      command=self._recapture)
+            btn_recapture.pack(side="left", padx=4)
+            add_tooltip(btn_recapture, TT["recapture"])
+        btn_retry = tk.Button(bar, text="↻ Retry", width=10, bg="#4ec9b0",
+                  command=lambda: self._done("retry"))
+        btn_retry.pack(side="left", padx=4)
+        add_tooltip(btn_retry, TT["retry"])
+        btn_inject_retry = tk.Button(bar, text="⤼ Inject & Retry", width=14, bg="#dcdcaa",
+                  command=self._inject_and_retry)
+        btn_inject_retry.pack(side="left", padx=4)
+        add_tooltip(btn_inject_retry, TT["inject_and_retry"])
+        btn_skip = tk.Button(bar, text="⏭ ข้าม Step", width=11,
+                  command=lambda: self._done("skip"))
+        btn_skip.pack(side="left", padx=4)
+        add_tooltip(btn_skip, TT["skip_step"])
+        btn_restart = tk.Button(bar, text="↩ Restart Row", width=12,
+                  command=lambda: self._done("restart"))
+        btn_restart.pack(side="left", padx=4)
+        add_tooltip(btn_restart, TT["restart_row"])
+        btn_skip_row = tk.Button(bar, text="⏩ ข้าม Row", width=11, bg="#c586c0", fg="white",
+                  command=lambda: self._done("skip_row"))
+        btn_skip_row.pack(side="left", padx=4)
+        add_tooltip(btn_skip_row, TT["skip_row"])
+        btn_stop = tk.Button(bar, text="⏹ Stop", width=9, bg="#f44747", fg="white",
+                  command=lambda: self._done("stop"))
+        btn_stop.pack(side="left", padx=4)
+        add_tooltip(btn_stop, TT["stop"])
 
     # ─── inject builder ──────────────────────────────────────────────────────
     def _add_inject(self):

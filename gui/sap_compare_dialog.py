@@ -9,6 +9,8 @@ from tkinter import ttk, messagebox
 
 from engine.sap_capture import CapturedEvent, to_sap_steps
 from gui.sequence_editor import _step_label
+from gui.tooltip import add_tooltip
+from gui.tooltip_texts import SAP_COMPARE as TT
 
 
 class SapCompareDialog(tk.Toplevel):
@@ -86,8 +88,10 @@ class SapCompareDialog(tk.Toplevel):
         new_name = f"{self._loop_name}_sap"
         tk.Label(foot, text=f"Loop ใหม่จะชื่อ: {new_name}",
                  fg="#6e6e6e", font=("Segoe UI", 8)).pack(side="left", padx=4)
-        tk.Button(foot, text="ยกเลิก", width=10,
-                  command=self.destroy).pack(side="right", padx=4)
+        btn_cancel = tk.Button(foot, text="ยกเลิก", width=10,
+                  command=self.destroy)
+        btn_cancel.pack(side="right", padx=4)
+        add_tooltip(btn_cancel, TT["cancel"])
         self._btn_save = tk.Button(
             foot, text=f"💾 บันทึก {new_name}", width=20,
             bg="#4ec9b0", fg="black", font=("Segoe UI", 9, "bold"),
@@ -95,6 +99,7 @@ class SapCompareDialog(tk.Toplevel):
             command=self._do_save,
         )
         self._btn_save.pack(side="right", padx=4)
+        add_tooltip(self._btn_save, TT["save"])
 
     def _do_save(self):
         new_name = f"{self._loop_name}_sap"

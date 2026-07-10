@@ -6,7 +6,7 @@ import engine.actions as actions
 from engine import ocr
 from engine.actions import ActionError
 from engine.data_source import DataSource
-from engine.image_matcher import find_on_screen, ImageNotFoundError
+from engine.image_matcher import capture_screen, find_on_screen, ImageNotFoundError
 from engine.interrupt_handler import InterruptHandler, BotStoppedError
 from engine.logger import get_logger
 
@@ -33,6 +33,7 @@ class LoopRunner:
         sap_capture=None,  # SapCapture instance (optional) — shadow record ระหว่างรัน
         ai_heal: bool = False,
         ai_heal_timeout: int = 60,
+        all_loops: dict = None,  # ชื่อ loop → config ทั้งหมดใน config นี้ — ใช้โดย action call_loop
     ):
         self._interrupt = interrupt
         self._on_image_not_found = on_image_not_found
@@ -44,6 +45,8 @@ class LoopRunner:
         self._sap_capture = sap_capture
         self._ai_heal = ai_heal
         self._ai_heal_timeout = ai_heal_timeout
+        self._all_loops = all_loops or {}
+        self._call_stack: list = []  # ชื่อ loop ที่กำลังถูกเรียกผ่าน call_loop อยู่ (กัน recursion)
         actions.set_log_callback(self._on_log)
 
     def run_loop(self, loop_config: dict, data_source: DataSource,
@@ -56,6 +59,7 @@ class LoopRunner:
         on_row_error = str(loop_config.get("on_row_error", "stop")).lower()
         recovery_steps = loop_config.get("recovery_steps", []) or []
         error_log_path = loop_config.get("error_log_path", "")
+        setup_steps = loop_config.get("setup_steps", []) or []
 
         # ตัวแปรเฉพาะ loop (loop-scoped) — override global เฉพาะตัวที่ "มีค่า"
         # ค่าว่าง (เช่น loop ที่เพิ่ง import มายังไม่กรอก) จะ fall through ไปใช้ค่า global เดิม
@@ -72,8 +76,21 @@ class LoopRunner:
             if overridden:
                 get_logger().info(f"Loop variables override global: {overridden}")
 
+        # สร้าง DataSource ตัวเดียวใช้ทั้ง setup และ steps — ค่าที่ setup เก็บไว้
+        # (เช่น sap_get_field → {SESSION_ID}) ต้องมองเห็นได้ตอนรันแถว
         if csv_path:
             ds = DataSource(base_static, csv_path, rows_filter=rows_filter)
+        else:
+            # ใช้ data_source เดิมถ้าไม่มี loop var (รักษา runtime values); ถ้ามีก็สร้างใหม่ที่ merge แล้ว
+            ds = DataSource(base_static) if loop_vars else data_source
+
+        if setup_steps:
+            # รันครั้งเดียวก่อนแถวแรก ({csv.X} ยังไม่มีค่า — resolve เป็นค่าว่าง) — พลาด = หยุดทั้งงานทันที
+            # (ไม่จับ error ที่นี่ — ปล่อยขึ้นไปให้ run_loop's caller เห็นว่า setup ล้มเหลว)
+            self._on_log(f"Setup — รันก่อนเริ่ม ({len(setup_steps)} steps)")
+            self._execute_steps(setup_steps, ds)
+
+        if csv_path:
             while ds.has_next_row():
                 ds.next_row()
                 row_num = ds.current_original_row_num()
@@ -111,8 +128,6 @@ class LoopRunner:
                     raise  # on_row_error=stop → หยุดทั้งงาน
                 # BotStoppedError (ผู้ใช้/stop_if_image/error_guard) ไม่ถูกจับ → หยุดทั้งงานเสมอ
         else:
-            # ใช้ data_source เดิมถ้าไม่มี loop var (รักษา runtime values); ถ้ามีก็สร้างใหม่ที่ merge แล้ว
-            ds = DataSource(base_static) if loop_vars else data_source
             try:
                 self._execute_steps(steps, ds)
             except SkipRowSignal as e:
@@ -304,25 +319,58 @@ class LoopRunner:
             time.sleep(0.4)
         raise ActionError(f"wait_text หมดเวลา {timeout}s (mode={step.get('mode', 'filled')})")
 
+    def _poll_until(self, check, wait_secs: float):
+        """เช็ค check() ทันทีหนึ่งครั้ง; ถ้าไม่ผ่าน (falsy) และ wait_secs > 0
+        → poll ซ้ำทุก 0.4s จนผ่านหรือหมดเวลา คืนผลของ check ครั้งล่าสุด"""
+        result = check()
+        if result or wait_secs <= 0:
+            return result
+        deadline = time.time() + wait_secs
+        while not result and time.time() < deadline:
+            self._interrupt.check()
+            time.sleep(0.4)
+            result = check()
+        return result
+
     def _do_if_image(self, step: dict, data_source: DataSource):
-        found = find_on_screen(step["target"], step.get("confidence", 0.85)) is not None
+        wait_secs = float(step.get("wait", 0) or 0)
+        target, conf = step["target"], step.get("confidence", 0.85)
+        found = bool(self._poll_until(
+            lambda: find_on_screen(target, conf) is not None, wait_secs))
         branch = step.get("then", []) if found else step.get("else", [])
         self._on_log(
             f"if_image: {step['target']} → {'then' if found else 'else'} ({len(branch)} steps)"
         )
         self._execute_steps(branch, data_source)
 
+    def _find_matching_case(self, cases: list, default_conf: float) -> tuple:
+        """ไล่เช็ก cases ตามลำดับ คืน (index, case) ของอันแรกที่ตรง หรือ None
+        ถ่ายจอครั้งเดียวแล้ว match ทุก template กับภาพเดียวกัน — เร็วกว่าและทุก case
+        เห็นหน้าจอ ณ เวลาเดียวกัน"""
+        screen = capture_screen() if cases else None
+        for i, case in enumerate(cases, 1):
+            if find_on_screen(case["target"], case.get("confidence", default_conf),
+                              screen=screen) is not None:
+                return (i, case)
+        return None
+
     def _do_switch_image(self, step: dict, data_source: DataSource):
         """แตกหลายทาง: ไล่เช็ก cases ตามลำดับ เจอรูปแรกที่ตรง → รัน steps ของ case นั้น
-        ถ้าไม่เข้า case ไหนเลย → รัน default"""
+        ถ้าไม่เข้า case ไหนเลย → รัน default (รอได้ด้วย 'wait' — เช่นรอหน้าจอเด้งมา)"""
         default_conf = step.get("confidence", 0.85)
-        for i, case in enumerate(step.get("cases", []), 1):
-            if find_on_screen(case["target"], case.get("confidence", default_conf)) is not None:
-                self._on_log(
-                    f"switch_image: case {i} ({case['target']}) → {len(case.get('steps', []))} steps"
-                )
-                self._execute_steps(case.get("steps", []), data_source)
-                return
+        wait_secs = float(step.get("wait", 0) or 0)
+        cases = step.get("cases", [])
+
+        match = self._poll_until(
+            lambda: self._find_matching_case(cases, default_conf), wait_secs)
+
+        if match is not None:
+            i, case = match
+            self._on_log(
+                f"switch_image: case {i} ({case['target']}) → {len(case.get('steps', []))} steps"
+            )
+            self._execute_steps(case.get("steps", []), data_source)
+            return
         default_steps = step.get("default", [])
         self._on_log(f"switch_image: ไม่เข้า case ใด → default ({len(default_steps)} steps)")
         self._execute_steps(default_steps, data_source)
@@ -356,6 +404,40 @@ class LoopRunner:
         """ข้ามแถว CSV ปัจจุบันทันที ไปทำแถวถัดไป"""
         msg = step.get("message") or "skip_row"
         raise SkipRowSignal(msg)
+
+    def _do_call_loop(self, step: dict, data_source: DataSource):
+        """เรียก loop อื่นเป็น subroutine — รันเฉพาะ steps ของมัน (ไม่สน data_source/
+        on_row_error/setup_steps ของ loop เป้าหมาย เพราะพวกนั้นมีผลเฉพาะตอนรันเป็น loop หลักเอง)
+        ตัวแปรเฉพาะของ loop เป้าหมาย (ที่มีค่า) ถูก apply ระหว่างรันแล้วคืนค่าเดิมให้ผู้เรียกเมื่อจบ
+        — loop ที่พึ่งตัวแปรตัวเองต้องทำงานเหมือนตอนรัน standalone"""
+        name = step.get("loop", "")
+        if not name:
+            raise ActionError("call_loop: ไม่ได้ระบุชื่อ loop")
+        if name not in self._all_loops:
+            raise ActionError(f"call_loop: ไม่พบ loop '{name}'")
+        if name in self._call_stack:
+            chain = " → ".join(self._call_stack + [name])
+            raise ActionError(f"call_loop: เรียกวนซ้ำ (recursion): {chain}")
+        target_cfg = self._all_loops[name]
+        target_steps = target_cfg.get("steps", [])
+        # overlay ตัวแปรเฉพาะ loop เป้าหมาย (ค่าว่าง = fall through ไปใช้ค่าผู้เรียก เหมือน run_loop)
+        overrides = {k: v for k, v in (target_cfg.get("variables") or {}).items()
+                     if v not in (None, "")}
+        _MISSING = object()
+        saved = {k: data_source._static.get(k, _MISSING) for k in overrides}
+        self._on_log(f"call_loop → {name} ({len(target_steps)} steps)")
+        self._call_stack.append(name)
+        try:
+            for k, v in overrides.items():
+                data_source.set_runtime(k, v)
+            self._execute_steps(target_steps, data_source)
+        finally:
+            self._call_stack.pop()
+            for k, prev in saved.items():
+                if prev is _MISSING:
+                    data_source._static.pop(k, None)
+                else:
+                    data_source._static[k] = prev
 
     def _do_skip_row_if_image(self, step: dict):
         """ถ้าเจอรูปที่กำหนด → ข้ามแถว CSV ปัจจุบัน ไปแถวถัดไป (ไม่หยุดทั้งงาน)"""
@@ -444,6 +526,8 @@ class LoopRunner:
                 self._do_skip_row(step)
             elif action == "skip_row_if_image":
                 self._do_skip_row_if_image(step)
+            elif action == "call_loop":
+                self._do_call_loop(step, data_source)
             # ─── SAP Scripting actions ───────────────────────────────────────
             elif action == "sap_set_field":
                 from engine.sap_actions import sap_set_field

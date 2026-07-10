@@ -15,6 +15,8 @@ from gui.log_panel import LogPanel
 from gui.capture_tool import CaptureTool
 from gui.error_dialog import show_debug_console
 from gui.sequence_editor import SequenceEditor
+from gui.tooltip import add_tooltip
+from gui.tooltip_texts import MAIN as TT
 
 
 CONFIG_PATH = "config/bot_config.yaml"
@@ -45,6 +47,9 @@ class MainWindow(tk.Tk):
         self._log_queue: queue.Queue = queue.Queue()
         self._monitor: ScreenMonitor = None
         self._bot_thread: threading.Thread = None
+        # Observe mode (Full Copilot ขั้น 1) — SapCapture + PatternStore ตอนกำลังสังเกต
+        self._observe_cap = None
+        self._observe_store = None
 
         self._build()
         self._poll_log_queue()
@@ -82,6 +87,7 @@ class MainWindow(tk.Tk):
                 command=self._on_run_mode_change,
             )
             rb.pack(side="left", padx=6)
+            add_tooltip(rb, TT[f"run_mode_{val}"])
             self._run_mode_radios.append(rb)
 
         # --- แถว: Loop (สำหรับ direct) + Mode (สำหรับ trigger) ---
@@ -95,6 +101,7 @@ class MainWindow(tk.Tk):
             cfg_bar, textvariable=self._loop_choice, state="readonly", width=26,
         )
         self._loop_combo.pack(side="left", padx=4)
+        add_tooltip(self._loop_combo, TT["loop_combo"])
 
         tk.Label(cfg_bar, text="Mode:", bg="#2d2d2d", fg="#9cdcfe",
                  font=("Segoe UI", 9)).pack(side="left", padx=(18, 4))
@@ -106,6 +113,7 @@ class MainWindow(tk.Tk):
                 activebackground="#2d2d2d", activeforeground="white",
             )
             rb.pack(side="left", padx=4)
+            add_tooltip(rb, TT[f"mode_{val}"])
             self._mode_radios.append(rb)
         self._refresh_loop_choices()
 
@@ -119,12 +127,14 @@ class MainWindow(tk.Tk):
             command=self._on_start,
         )
         self._btn_start.pack(side="left", padx=4)
+        add_tooltip(self._btn_start, TT["start"])
 
         self._btn_pause = tk.Button(
             ctrl1, text="⏸  Pause", width=12,
             state="disabled", command=self._on_pause,
         )
         self._btn_pause.pack(side="left", padx=4)
+        add_tooltip(self._btn_pause, TT["pause"])
 
         self._btn_stop = tk.Button(
             ctrl1, text="⏹  Stop", width=12,
@@ -132,6 +142,7 @@ class MainWindow(tk.Tk):
             state="disabled", command=self._on_stop,
         )
         self._btn_stop.pack(side="left", padx=4)
+        add_tooltip(self._btn_stop, TT["stop"])
 
         tk.Label(ctrl1, text="ESC = หยุดบอท (ทุกหน้าต่าง)  |  Mouse มุมซ้ายบน = หยุดทันที",
                  bg="#2d2d2d", fg="#6e6e6e", font=("Segoe UI", 8)).pack(side="left", padx=14)
@@ -145,26 +156,42 @@ class MainWindow(tk.Tk):
         tk.Label(ctrl2, text="Tools:", bg="#252526", fg="#9cdcfe",
                  font=("Segoe UI", 9)).pack(side="left", padx=(4, 8))
 
-        tk.Button(
+        btn_capture_trigger = tk.Button(
             ctrl2, text="+ Capture Trigger", width=16,
             command=self._on_capture_trigger,
-        ).pack(side="left", padx=4)
+        )
+        btn_capture_trigger.pack(side="left", padx=4)
+        add_tooltip(btn_capture_trigger, TT["capture_trigger"])
 
-        tk.Button(
+        btn_capture_element = tk.Button(
             ctrl2, text="+ Capture Element", width=16,
             command=self._on_capture_element,
-        ).pack(side="left", padx=4)
+        )
+        btn_capture_element.pack(side="left", padx=4)
+        add_tooltip(btn_capture_element, TT["capture_element"])
 
-        tk.Button(
+        btn_seq_editor = tk.Button(
             ctrl2, text="Sequence Editor", width=16,
             bg="#569cd6", fg="white", font=("Segoe UI", 9, "bold"),
             command=self._open_sequence_editor,
-        ).pack(side="left", padx=4)
+        )
+        btn_seq_editor.pack(side="left", padx=4)
+        add_tooltip(btn_seq_editor, TT["sequence_editor"])
 
-        tk.Button(
+        btn_schedule = tk.Button(
             ctrl2, text="🕒 Schedule", width=12,
             command=self._open_schedule,
-        ).pack(side="left", padx=4)
+        )
+        btn_schedule.pack(side="left", padx=4)
+        add_tooltip(btn_schedule, TT["schedule"])
+
+        self._btn_observe = tk.Button(
+            ctrl2, text="👁 Observe", width=14,
+            command=self._on_toggle_observe,
+        )
+        self._btn_observe.pack(side="left", padx=4)
+        add_tooltip(self._btn_observe, TT["observe"])
+        self._observe_btn_bg = self._btn_observe.cget("bg")
 
         # --- Status bar ---
         status_bar = tk.Frame(self, bg="#007acc", pady=3)
@@ -186,6 +213,7 @@ class MainWindow(tk.Tk):
             selectbackground="#0e639c", font=("Consolas", 9),
         )
         self._state_list.pack(fill="x", padx=6, pady=4)
+        add_tooltip(self._state_list, TT["state_list"])
         self._refresh_state_list()
 
         # --- Log panel ---
@@ -276,6 +304,7 @@ class MainWindow(tk.Tk):
             sap_capture=sap_cap,
             ai_heal=bool(ai_heal_cfg.get("enabled", False)),
             ai_heal_timeout=int(ai_heal_cfg.get("timeout", 60)),
+            all_loops=self._config.get("loops", {}),
         )
 
         def run():
@@ -356,6 +385,7 @@ class MainWindow(tk.Tk):
             sap_capture=sap_cap,
             ai_heal=bool(_ai.get("enabled", False)),
             ai_heal_timeout=int(_ai.get("timeout", 60)),
+            all_loops=self._config.get("loops", {}),
         )
 
         def run():
@@ -394,6 +424,82 @@ class MainWindow(tk.Tk):
                 yaml.dump(self._config, f, allow_unicode=True, sort_keys=False)
             self._queue_log(f"✅ สร้าง loop '{new_name}' (SAP script) แล้ว", "ok")
         SapCompareDialog(self, image_steps, sap_events, loop_name, on_save=on_save)
+
+    # ─── Observe mode (Full Copilot ขั้น 1: Suggest from repetition) ─────────
+
+    def _on_toggle_observe(self):
+        if self._observe_cap:
+            self._stop_observe()
+        else:
+            self._start_observe()
+
+    def _start_observe(self):
+        from engine.sap_capture import SapCapture
+        from engine.pattern_observer import PatternStore
+        store = PatternStore()
+        cap = SapCapture(observer=store.record)
+        # ต้อง start บน main thread — GetObject("SAPGUI") จาก background thread จะค้าง
+        if not cap.start():
+            messagebox.showwarning(
+                "Observe",
+                "เชื่อม SAP ไม่ได้ — เปิด SAP Logon และเปิดใช้ Scripting ก่อน",
+                parent=self,
+            )
+            return
+        self._observe_cap = cap
+        self._observe_store = store
+        self._btn_observe.configure(text="👁 กำลังสังเกต…", bg="#c586c0", fg="black")
+        self._queue_log(
+            "👁 Observe เริ่มแล้ว — จดค่าที่กรอกใน SAP เก็บในเครื่องเท่านั้น "
+            "(ไม่จดช่องรหัสผ่าน) กดปุ่มอีกครั้งเพื่อหยุดและดูข้อเสนอ", "info")
+
+    def _stop_observe(self):
+        cap, store = self._observe_cap, self._observe_store
+        self._observe_cap = None
+        self._observe_store = None
+        self._btn_observe.configure(text="👁 Observe", bg=self._observe_btn_bg, fg="black")
+        if cap:
+            cap.stop()
+        self._queue_log("👁 Observe หยุดแล้ว", "info")
+        if store:
+            self._offer_observe_suggestions(store)
+
+    def _offer_observe_suggestions(self, store):
+        """เจอแพทเทิร์นซ้ำถึงเกณฑ์ → ถามผู้ใช้ทีละหน้าจอว่าจะให้สร้าง loop ไหม"""
+        from engine.pattern_observer import suggestion_to_loop
+        min_rep = int(self._config.get("observe_min_repeats", 3))
+        sugs = store.suggestions(min_repeats=min_rep)
+        if not sugs:
+            self._queue_log(
+                f"ยังไม่พบแพทเทิร์นที่ซ้ำถึง {min_rep} ครั้ง — สังเกตต่อได้เรื่อยๆ ข้อมูลสะสมข้ามรอบ",
+                "info")
+            return
+        for sug in sugs:
+            lines = "\n".join(
+                f"  • {f['field_id'].rsplit('/', 1)[-1]} = {f['value']}  (ซ้ำ {f['count']} ครั้ง)"
+                for f in sug["fields"][:8])
+            ans = messagebox.askyesno(
+                "Copilot พบแพทเทิร์นซ้ำ",
+                f"หน้าจอ: {sug['screen'] or '(ไม่ทราบ)'}\n"
+                f"คุณกรอกค่าเดิมซ้ำหลายครั้ง:\n{lines}\n\n"
+                "ให้สร้าง loop สำหรับกรอกค่าพวกนี้อัตโนมัติไหม?\n"
+                "(ตอบไม่ = จะไม่ถามแพทเทิร์นนี้ซ้ำอีก)",
+                parent=self,
+            )
+            if ans:
+                name, cfg = suggestion_to_loop(sug)
+                loops = self._config.setdefault("loops", {})
+                base, i = name, 2
+                while name in loops:
+                    name = f"{base}_{i}"
+                    i += 1
+                loops[name] = cfg
+                with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+                    yaml.dump(self._config, f, allow_unicode=True, sort_keys=False)
+                self._refresh_loop_choices()
+                self._queue_log(f"✅ สร้าง loop '{name}' จากแพทเทิร์นที่สังเกตได้", "ok")
+            else:
+                store.dismiss(sug)
 
     def _on_start(self):
         """ปุ่ม Start เดียว — ทำตาม 'รันแบบ' ที่เลือก"""
@@ -440,6 +546,7 @@ class MainWindow(tk.Tk):
             on_log=lambda msg: self._queue_log(msg),
             ai_heal=bool(_ai.get("enabled", False)),
             ai_heal_timeout=int(_ai.get("timeout", 60)),
+            all_loops=self._config.get("loops", {}),
         )
         states = self._config.get("states", [])
         loops = self._config.get("loops", {})
@@ -449,6 +556,7 @@ class MainWindow(tk.Tk):
                 states=states,
                 on_state_detected=lambda name: self._on_state_detected(name, runner, data_source, loops),
                 interval=1.5,
+                cooldown=float(self._config.get("trigger_cooldown", 0)),
             )
             self._monitor.start()
 
@@ -489,6 +597,7 @@ class MainWindow(tk.Tk):
             on_log=lambda msg: self._queue_log(msg),
             ai_heal=bool(_ai.get("enabled", False)),
             ai_heal_timeout=int(_ai.get("timeout", 60)),
+            all_loops=self._config.get("loops", {}),
         )
         states = self._config.get("states", [])
         loops = self._config.get("loops", {})
@@ -511,7 +620,10 @@ class MainWindow(tk.Tk):
             if result["confirmed"]:
                 self._on_state_detected(name, runner, data_source, loops)
 
-        self._monitor = ScreenMonitor(states=states, on_state_detected=on_state)
+        self._monitor = ScreenMonitor(
+            states=states, on_state_detected=on_state,
+            cooldown=float(self._config.get("trigger_cooldown", 0)),
+        )
         self._monitor.start()
 
     def _handle_debug(self, context: dict) -> dict:

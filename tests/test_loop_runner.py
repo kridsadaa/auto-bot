@@ -249,6 +249,55 @@ def test_if_image_runs_else_branch_when_absent(mock_interrupt):
     mock_key.assert_called_once_with("enter")
 
 
+# ─── if_image wait (รอรูปก่อนตัดสิน) ──────────────────────────────────────────
+
+def test_if_image_wait_zero_checks_once_like_before(mock_interrupt):
+    # wait=0 (default) → เช็คครั้งเดียว ไม่ poll — พฤติกรรมเดิมเป๊ะ
+    runner = make_runner(mock_interrupt)
+    ds = DataSource({})
+    with patch("engine.loop_runner.find_on_screen", return_value=None) as mock_find, \
+         patch("engine.actions.press_key") as mock_key, \
+         patch("engine.loop_runner.time.sleep") as mock_sleep:
+        runner.run_loop({"steps": [{
+            "action": "if_image", "target": "popup.png", "wait": 0,
+            "then": [{"action": "key", "key": "esc"}],
+            "else": [{"action": "key", "key": "enter"}],
+        }]}, ds)
+    mock_key.assert_called_once_with("enter")
+    assert mock_find.call_count == 1
+    mock_sleep.assert_not_called()
+
+
+def test_if_image_wait_finds_image_that_appears_late(mock_interrupt):
+    # ไม่เจอ 2 ครั้งแรก (หน้าต่างกำลังเด้ง) เจอครั้งที่ 3 → ต้องเข้า THEN ไม่ใช่ ELSE
+    runner = make_runner(mock_interrupt)
+    ds = DataSource({})
+    with patch("engine.loop_runner.find_on_screen", side_effect=[None, None, (1, 1)]), \
+         patch("engine.actions.press_key") as mock_key, \
+         patch("engine.loop_runner.time.sleep"):
+        runner.run_loop({"steps": [{
+            "action": "if_image", "target": "popup.png", "wait": 5,
+            "then": [{"action": "key", "key": "esc"}],
+            "else": [{"action": "key", "key": "enter"}],
+        }]}, ds)
+    mock_key.assert_called_once_with("esc")
+
+
+def test_if_image_wait_times_out_to_else(mock_interrupt):
+    # ไม่เจอเลยตลอด wait → หมดเวลาแล้วไป ELSE
+    runner = make_runner(mock_interrupt)
+    ds = DataSource({})
+    with patch("engine.loop_runner.find_on_screen", return_value=None), \
+         patch("engine.actions.press_key") as mock_key, \
+         patch("engine.loop_runner.time.sleep"):
+        runner.run_loop({"steps": [{
+            "action": "if_image", "target": "popup.png", "wait": 0.05,
+            "then": [{"action": "key", "key": "esc"}],
+            "else": [{"action": "key", "key": "enter"}],
+        }]}, ds)
+    mock_key.assert_called_once_with("enter")
+
+
 # ─── stop_if_image ───────────────────────────────────────────────────────────
 
 def test_stop_if_image_raises_when_found(mock_interrupt):
@@ -316,6 +365,59 @@ def test_switch_image_no_default_no_match_does_nothing(mock_interrupt):
             "cases": [{"target": "a.png", "steps": [{"action": "key", "key": "f1"}]}],
         }]}, ds)
     mock_key.assert_not_called()
+
+
+# ─── switch_image wait (รอรูปก่อนตัดสิน) ──────────────────────────────────────
+
+def test_switch_image_wait_zero_checks_once_like_before(mock_interrupt):
+    runner = make_runner(mock_interrupt)
+    ds = DataSource({})
+    with patch("engine.loop_runner.find_on_screen", side_effect=[None, (1, 1)]) as mock_find, \
+         patch("engine.actions.press_key") as mock_key, \
+         patch("engine.loop_runner.time.sleep") as mock_sleep:
+        runner.run_loop({"steps": [{
+            "action": "switch_image", "wait": 0,
+            "cases": [
+                {"target": "a.png", "steps": [{"action": "key", "key": "f1"}]},
+                {"target": "b.png", "steps": [{"action": "key", "key": "f2"}]},
+            ],
+            "default": [{"action": "key", "key": "esc"}],
+        }]}, ds)
+    mock_key.assert_called_once_with("f2")
+    assert mock_find.call_count == 2
+    mock_sleep.assert_not_called()
+
+
+def test_switch_image_wait_finds_late_matching_case(mock_interrupt):
+    # case ที่ตรง (b.png) มาช้า — poll รอบแรกทั้งคู่ไม่เจอ, รอบสองเจอ b.png
+    runner = make_runner(mock_interrupt)
+    ds = DataSource({})
+    with patch("engine.loop_runner.find_on_screen", side_effect=[None, None, None, (1, 1)]), \
+         patch("engine.actions.press_key") as mock_key, \
+         patch("engine.loop_runner.time.sleep"):
+        runner.run_loop({"steps": [{
+            "action": "switch_image", "wait": 5,
+            "cases": [
+                {"target": "a.png", "steps": [{"action": "key", "key": "f1"}]},
+                {"target": "b.png", "steps": [{"action": "key", "key": "f2"}]},
+            ],
+            "default": [{"action": "key", "key": "esc"}],
+        }]}, ds)
+    mock_key.assert_called_once_with("f2")
+
+
+def test_switch_image_wait_times_out_to_default(mock_interrupt):
+    runner = make_runner(mock_interrupt)
+    ds = DataSource({})
+    with patch("engine.loop_runner.find_on_screen", return_value=None), \
+         patch("engine.actions.press_key") as mock_key, \
+         patch("engine.loop_runner.time.sleep"):
+        runner.run_loop({"steps": [{
+            "action": "switch_image", "wait": 0.05,
+            "cases": [{"target": "a.png", "steps": [{"action": "key", "key": "f1"}]}],
+            "default": [{"action": "key", "key": "esc"}],
+        }]}, ds)
+    mock_key.assert_called_once_with("esc")
 
 
 # ─── UI element actions ──────────────────────────────────────────────────────
@@ -591,6 +693,214 @@ def test_hotkey_string_keys(mock_interrupt):
             "steps": [{"action": "hotkey", "keys": "ctrl+shift+s"}],
         }, ds)
         mock_hotkey.assert_called_once_with("ctrl", "shift", "s")
+
+
+# ─── call_loop (subroutine) ──────────────────────────────────────────────────
+
+def test_call_loop_runs_target_loop_steps(mock_interrupt):
+    runner = LoopRunner(
+        interrupt=mock_interrupt, on_log=lambda m: None,
+        all_loops={"login": {"steps": [{"action": "key", "key": "enter"}]}},
+    )
+    ds = DataSource({})
+    with patch("engine.actions.press_key") as mock_key:
+        runner.run_loop({"steps": [{"action": "call_loop", "loop": "login"}]}, ds)
+    mock_key.assert_called_once_with("enter")
+
+
+def test_call_loop_missing_loop_name_raises(mock_interrupt):
+    runner = LoopRunner(interrupt=mock_interrupt, on_log=lambda m: None, all_loops={})
+    ds = DataSource({})
+    with pytest.raises(RowError):
+        runner.run_loop({"steps": [{"action": "call_loop", "loop": "nope"}]}, ds)
+
+
+def test_call_loop_empty_loop_name_raises(mock_interrupt):
+    runner = LoopRunner(interrupt=mock_interrupt, on_log=lambda m: None, all_loops={})
+    ds = DataSource({})
+    with pytest.raises(RowError):
+        runner.run_loop({"steps": [{"action": "call_loop", "loop": ""}]}, ds)
+
+
+def test_call_loop_direct_recursion_raises(mock_interrupt):
+    # loop "a" เรียกตัวเอง — ต้อง error ไม่ใช่วนไม่รู้จบ
+    runner = LoopRunner(
+        interrupt=mock_interrupt, on_log=lambda m: None,
+        all_loops={"a": {"steps": [{"action": "call_loop", "loop": "a"}]}},
+    )
+    ds = DataSource({})
+    with pytest.raises(RowError):
+        runner.run_loop({"steps": [{"action": "call_loop", "loop": "a"}]}, ds)
+
+
+def test_call_loop_indirect_recursion_raises(mock_interrupt):
+    # a → b → a — ต้องจับ recursion ข้ามหลาย loop ได้ด้วย
+    runner = LoopRunner(
+        interrupt=mock_interrupt, on_log=lambda m: None,
+        all_loops={
+            "a": {"steps": [{"action": "call_loop", "loop": "b"}]},
+            "b": {"steps": [{"action": "call_loop", "loop": "a"}]},
+        },
+    )
+    ds = DataSource({})
+    with pytest.raises(RowError):
+        runner.run_loop({"steps": [{"action": "call_loop", "loop": "a"}]}, ds)
+
+
+def test_call_loop_same_loop_called_twice_sequentially_is_fine(mock_interrupt):
+    # เรียก loop เดียวกัน 2 ครั้งไม่ซ้อนกัน (ไม่ใช่ recursion) ต้องรันได้ปกติ
+    runner = LoopRunner(
+        interrupt=mock_interrupt, on_log=lambda m: None,
+        all_loops={"beep": {"steps": [{"action": "key", "key": "f1"}]}},
+    )
+    ds = DataSource({})
+    with patch("engine.actions.press_key") as mock_key:
+        runner.run_loop({"steps": [
+            {"action": "call_loop", "loop": "beep"},
+            {"action": "call_loop", "loop": "beep"},
+        ]}, ds)
+    assert mock_key.call_count == 2
+
+
+def test_call_loop_applies_called_loops_variables_and_restores(mock_interrupt):
+    # loop ที่พึ่งตัวแปรเฉพาะตัวเอง ต้องทำงานผ่าน call_loop เหมือนรัน standalone
+    # และค่าของผู้เรียกต้องกลับมาเหมือนเดิมหลังจบ
+    runner = LoopRunner(
+        interrupt=mock_interrupt, on_log=lambda m: None,
+        all_loops={"login": {
+            "variables": {"SAP_USER": "bob", "EMPTY_VAR": ""},
+            "steps": [{"action": "type", "text": "{SAP_USER}/{GLOBAL}"}],
+        }},
+    )
+    ds = DataSource({"SAP_USER": "caller", "GLOBAL": "g"})
+    typed = []
+    with patch("engine.actions.type_text", side_effect=lambda t, **kw: typed.append(t)):
+        runner.run_loop({"steps": [
+            {"action": "call_loop", "loop": "login"},
+            {"action": "type", "text": "{SAP_USER}"},
+        ]}, ds)
+    # ใน login: SAP_USER = ค่าของ login เอง, GLOBAL fall through จากผู้เรียก
+    # หลังจบ: SAP_USER กลับเป็นของผู้เรียก
+    assert typed == ["bob/g", "caller"]
+
+
+def test_call_loop_restores_variables_even_on_error(mock_interrupt):
+    from engine.actions import ActionError
+    runner = LoopRunner(
+        interrupt=mock_interrupt, on_log=lambda m: None,
+        all_loops={"sub": {
+            "variables": {"X": "subval"},
+            "steps": [{"action": "key", "key": "boom"}],
+        }},
+    )
+    ds = DataSource({"X": "orig"})
+    with patch("engine.actions.press_key", side_effect=ActionError("fail")):
+        with pytest.raises(RowError):
+            runner.run_loop({"steps": [{"action": "call_loop", "loop": "sub"}]}, ds)
+    assert ds._static["X"] == "orig"  # ค่าเดิมกลับมาแม้ sub loop พัง
+
+
+def test_call_loop_nested_non_recursive_chain_works(mock_interrupt):
+    # a → b → c (ไม่ซ้ำชื่อ) ต้องรันได้ปกติทั้ง chain
+    runner = LoopRunner(
+        interrupt=mock_interrupt, on_log=lambda m: None,
+        all_loops={
+            "a": {"steps": [{"action": "call_loop", "loop": "b"}]},
+            "b": {"steps": [{"action": "call_loop", "loop": "c"}]},
+            "c": {"steps": [{"action": "key", "key": "ok"}]},
+        },
+    )
+    ds = DataSource({})
+    with patch("engine.actions.press_key") as mock_key:
+        runner.run_loop({"steps": [{"action": "call_loop", "loop": "a"}]}, ds)
+    mock_key.assert_called_once_with("ok")
+
+
+# ─── setup_steps (รันครั้งเดียวก่อนแถวแรก) ────────────────────────────────────
+
+def test_setup_steps_run_once_before_csv_rows(mock_interrupt, tmp_csv):
+    runner = make_runner(mock_interrupt)
+    ds = DataSource({})
+    calls = []
+    with patch("engine.actions.press_key", side_effect=lambda k: calls.append(("key", k))), \
+         patch("engine.actions.type_text", side_effect=lambda t, **kw: calls.append(("type", t))):
+        runner.run_loop({
+            "data_source": tmp_csv,
+            "setup_steps": [{"action": "key", "key": "login"}],
+            "steps": [{"action": "type", "text": "{csv.MATERIAL_CODE}"}],
+        }, ds)
+    # setup ("login") ต้องรันแค่ครั้งเดียว แม้ CSV มี 3 แถว
+    assert calls == [
+        ("key", "login"),
+        ("type", "MAT-001"),
+        ("type", "MAT-002"),
+        ("type", "MAT-003"),
+    ]
+
+
+def test_setup_steps_run_once_without_csv(mock_interrupt):
+    runner = make_runner(mock_interrupt)
+    ds = DataSource({})
+    with patch("engine.actions.press_key") as mock_key:
+        runner.run_loop({
+            "setup_steps": [{"action": "key", "key": "login"}],
+            "steps": [{"action": "key", "key": "main"}],
+        }, ds)
+    assert mock_key.call_args_list == [call("login"), call("main")]
+
+
+def test_setup_steps_failure_aborts_whole_loop(mock_interrupt, tmp_csv):
+    from engine.actions import ActionError
+    runner = make_runner(mock_interrupt)
+    ds = DataSource({})
+    with patch("engine.actions.press_key", side_effect=ActionError("login failed")), \
+         patch("engine.actions.type_text") as mock_type:
+        with pytest.raises(RowError):
+            runner.run_loop({
+                "data_source": tmp_csv,
+                "on_row_error": "skip",  # แม้ policy เป็น skip, setup พลาด ต้องหยุดทั้งงาน ไม่ข้ามไปแถวถัดไป
+                "setup_steps": [{"action": "key", "key": "login"}],
+                "steps": [{"action": "type", "text": "{csv.MATERIAL_CODE}"}],
+            }, ds)
+    mock_type.assert_not_called()  # ไม่ควรถึงแถวไหนเลย
+
+
+def test_setup_steps_runtime_var_visible_in_row_steps(mock_interrupt, tmp_csv):
+    # ค่าที่ setup เก็บ (เช่น sap_get_field → ตัวแปร) ต้องใช้ได้ตอนรันแถว CSV
+    runner = make_runner(mock_interrupt)
+    ds = DataSource({})
+    typed = []
+    with patch("engine.sap_actions.sap_get_field", return_value="S-42"), \
+         patch("engine.actions.type_text", side_effect=lambda t, **kw: typed.append(t)):
+        runner.run_loop({
+            "data_source": tmp_csv,
+            "setup_steps": [{"action": "sap_get_field", "field_id": "wnd[0]/sbar",
+                             "variable": "SESSION_ID"}],
+            "steps": [{"action": "type", "text": "{SESSION_ID}:{csv.MATERIAL_CODE}"}],
+        }, ds)
+    assert typed == ["S-42:MAT-001", "S-42:MAT-002", "S-42:MAT-003"]
+
+
+def test_setup_steps_runtime_var_visible_without_csv(mock_interrupt):
+    runner = make_runner(mock_interrupt)
+    ds = DataSource({})
+    typed = []
+    with patch("engine.sap_actions.sap_get_field", return_value="S-42"), \
+         patch("engine.actions.type_text", side_effect=lambda t, **kw: typed.append(t)):
+        runner.run_loop({
+            "setup_steps": [{"action": "sap_get_field", "field_id": "wnd[0]/sbar",
+                             "variable": "SESSION_ID"}],
+            "steps": [{"action": "type", "text": "{SESSION_ID}"}],
+        }, ds)
+    assert typed == ["S-42"]
+
+
+def test_no_setup_steps_behaves_as_before(mock_interrupt):
+    runner = make_runner(mock_interrupt)
+    ds = DataSource({})
+    with patch("engine.actions.press_key") as mock_key:
+        runner.run_loop({"steps": [{"action": "key", "key": "main"}]}, ds)
+    mock_key.assert_called_once_with("main")
 
 
 def test_wait_text_with_string_region(mock_interrupt):

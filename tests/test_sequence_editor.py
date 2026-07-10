@@ -1,18 +1,10 @@
-import tkinter as tk
-
 import pytest
 
 from gui.sequence_editor import _step_label, StepDialog
 from engine import prefs
 
-
-@pytest.fixture(scope="module")
-def tk_root():
-    """root เดียวต่อโมดูล — สร้าง tk.Tk() หลายครั้งในโปรเซสเดียวทำให้ Tcl พัง"""
-    root = tk.Tk()
-    root.withdraw()
-    yield root
-    root.destroy()
+# tk_root มาจาก conftest.py (session-scoped) — ห้ามสร้าง tk.Tk() เองในโมดูล
+# เพราะ Tcl บน Windows พังถ้ามี root ตัวที่สองหลังตัวแรกถูก destroy
 
 
 def test_step_label():

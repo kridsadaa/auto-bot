@@ -73,7 +73,10 @@ def run_loop_headless(loop_name: str, config_path: str = DEFAULT_CONFIG) -> int:
     interrupt = InterruptHandler()
     interrupt.start()
     # headless: ห้ามเปิด Tk dialog → on_image_not_found=None (เจอภาพไม่ได้ = หยุด/ข้ามตาม on_row_error)
-    runner = LoopRunner(interrupt=interrupt, on_image_not_found=None, on_log=_safe_print)
+    runner = LoopRunner(
+        interrupt=interrupt, on_image_not_found=None, on_log=_safe_print,
+        all_loops=loops,
+    )
     try:
         runner.run_loop(loops[loop_name], data_source)
         _safe_print(f"Loop {loop_name} เสร็จสิ้น")

@@ -7,6 +7,8 @@ import copy
 
 from engine.runtime import apply_window_icon
 from engine import prefs
+from gui.tooltip import add_tooltip
+from gui.tooltip_texts import SEQ_EDITOR as TT_SEQ, STEP_DIALOG as TT_STEP, LOOP_SETTINGS as TT_LOOP
 
 CONFIG_PATH = "config/bot_config.yaml"
 
@@ -14,7 +16,7 @@ ACTION_TYPES = [
     "click_image", "type", "key", "hotkey", "wait", "screenshot", "scroll", "drag",
     "wait_image", "wait_text", "repeat_key_until", "stop_if_image",
     "skip_row_if_image", "skip_row", "if_image", "switch_image",
-    "write_row",
+    "write_row", "call_loop",
     "click_element", "set_element_text", "wait_element",
     "sap_set_field", "sap_get_field", "sap_press",
 ]
@@ -35,6 +37,47 @@ def _load_config() -> dict:
 def _save_config(config: dict):
     with open(CONFIG_PATH, "w", encoding="utf-8") as f:
         yaml.dump(config, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
+
+
+def _show_image_preview(parent, path: str):
+    """เปิดหน้าต่างเล็กๆ แสดงรูปเต็มที่ path นี้ชี้ไป — ช่วยดูว่ารูปที่อ้างถึงในช่องคือรูปอะไร"""
+    path = (path or "").strip()
+    if not path:
+        messagebox.showwarning("Preview", "ยังไม่ได้เลือกรูป", parent=parent)
+        return
+    if not os.path.exists(path):
+        messagebox.showwarning("Preview", f"ไม่พบไฟล์:\n{path}", parent=parent)
+        return
+    try:
+        img = Image.open(path)
+    except Exception as e:
+        messagebox.showerror("Preview", f"เปิดรูปไม่ได้:\n{e}", parent=parent)
+        return
+
+    popup = tk.Toplevel(parent)
+    popup.title(os.path.basename(path))
+    popup.resizable(False, False)
+    popup.configure(bg="#1e1e1e")
+
+    orig_w, orig_h = img.size
+    disp = img.copy()
+    disp.thumbnail((640, 640), Image.LANCZOS)
+    photo = ImageTk.PhotoImage(disp)
+    popup.image = photo  # กัน garbage collect ตอน widget ถูกวาด
+
+    tk.Label(popup, image=photo, bg="#1e1e1e").pack(padx=10, pady=(10, 4))
+    tk.Label(
+        popup, text=f"{path}   ({orig_w}×{orig_h}px)",
+        bg="#1e1e1e", fg="#9cdcfe", font=("Segoe UI", 8),
+    ).pack(padx=10, pady=(0, 8))
+    tk.Button(popup, text="ปิด", width=10, command=popup.destroy).pack(pady=(0, 10))
+    popup.bind("<Escape>", lambda e: popup.destroy())
+
+    popup.update_idletasks()
+    w, h = popup.winfo_width(), popup.winfo_height()
+    sw, sh = popup.winfo_screenwidth(), popup.winfo_screenheight()
+    popup.geometry(f"+{(sw - w) // 2}+{(sh - h) // 2}")
+    popup.focus_set()
 
 
 def _step_label(step: dict) -> str:
@@ -76,6 +119,8 @@ def _step_label(step: dict) -> str:
     if action == "switch_image":
         return (f"switch_image   →   {len(step.get('cases', []))} cases "
                 f"(+default {len(step.get('default', []))})")
+    if action == "call_loop":
+        return f"call_loop      →   {step.get('loop', '?')}"
     if action == "write_row":
         cols = step.get("columns", [])
         n = len(cols) if isinstance(cols, list) else len(str(cols).split(","))
@@ -139,10 +184,14 @@ class PositionPicker(tk.Toplevel):
 
         btn = tk.Frame(self)
         btn.pack(pady=8)
-        tk.Button(btn, text="บันทึกจุดนี้", width=12, bg="#4ec9b0",
-                  command=self._save).pack(side="left", padx=5)
-        tk.Button(btn, text="ใช้กลางรูป", width=12,
-                  command=self._use_center).pack(side="left", padx=5)
+        btn_save_point = tk.Button(btn, text="บันทึกจุดนี้", width=12, bg="#4ec9b0",
+                  command=self._save)
+        btn_save_point.pack(side="left", padx=5)
+        add_tooltip(btn_save_point, "บันทึกจุดที่คลิกไว้ล่าสุดเป็นจุดกด")
+        btn_use_center = tk.Button(btn, text="ใช้กลางรูป", width=12,
+                  command=self._use_center)
+        btn_use_center.pack(side="left", padx=5)
+        add_tooltip(btn_use_center, "ใช้จุดกึ่งกลางรูปเป็นจุดกด (ค่า default ถ้าไม่เลือกอะไร)")
         tk.Button(btn, text="ยกเลิก", width=10, command=self.destroy).pack(side="left", padx=5)
 
     def _on_click(self, event):
@@ -247,7 +296,8 @@ class StepDialog(tk.Toplevel):
     """Dialog สำหรับเพิ่มหรือแก้ไข step"""
 
     def __init__(self, parent, step: dict = None, csv_columns: list = None,
-                 variables: list = None, capture_dir: str = "elements"):
+                 variables: list = None, capture_dir: str = "elements",
+                 loop_names: list = None):
         super().__init__(parent)
         self.title("แก้ไข Step" if step else "เพิ่ม Step")
         self.resizable(False, False)
@@ -257,6 +307,7 @@ class StepDialog(tk.Toplevel):
         self._csv_columns = csv_columns or []  # คอลัมน์ CSV ของ loop (สำหรับ dropdown ในช่อง type)
         self._variables = variables or []  # ตัวแปรที่ใช้ได้ (built-in + global) สำหรับ dropdown ในช่อง type
         self._capture_dir = capture_dir or "elements"  # โฟลเดอร์เซฟรูปของ loop นี้ (กันชื่อชนข้าม loop)
+        self._loop_names = loop_names or []  # ชื่อ loop ทั้งหมด (สำหรับ dropdown ของ call_loop)
         self._fields: dict[str, tk.Variable] = {}
         self._offset_label = None
         ox, oy = self._step.get("offset_x"), self._step.get("offset_y")
@@ -283,6 +334,7 @@ class StepDialog(tk.Toplevel):
         )
         action_menu.pack(side="left")
         action_menu.bind("<<ComboboxSelected>>", lambda e: self._refresh_fields())
+        add_tooltip(action_menu, TT_STEP["action_type"])
 
         # Dynamic fields area
         self._fields_frame = tk.Frame(self)
@@ -292,8 +344,12 @@ class StepDialog(tk.Toplevel):
         # Buttons
         btn = tk.Frame(self)
         btn.pack(pady=10)
-        tk.Button(btn, text="บันทึก", width=10, bg="#4ec9b0", command=self._save).pack(side="left", padx=6)
-        tk.Button(btn, text="ยกเลิก", width=10, command=self.destroy).pack(side="left", padx=6)
+        btn_save = tk.Button(btn, text="บันทึก", width=10, bg="#4ec9b0", command=self._save)
+        btn_save.pack(side="left", padx=6)
+        add_tooltip(btn_save, TT_STEP["save"])
+        btn_cancel = tk.Button(btn, text="ยกเลิก", width=10, command=self.destroy)
+        btn_cancel.pack(side="left", padx=6)
+        add_tooltip(btn_cancel, TT_STEP["cancel"])
 
     def _refresh_fields(self):
         for w in self._fields_frame.winfo_children():
@@ -406,19 +462,43 @@ class StepDialog(tk.Toplevel):
         elif action == "if_image":
             self._add_field("target", "Image file:", browse=True)
             self._add_field("confidence", "Confidence:", default=str(self._step.get("confidence", 0.85)))
+            self._add_field("wait", "รอรูปก่อนตัดสิน (s):", default=str(self._step.get("wait", 0)),
+                            tooltip=TT_STEP["wait_before_decide"])
+            tk.Label(self._fields_frame,
+                     text="  0 = เช็คทันทีครั้งเดียว (default) / >0 = รอจนกว่าจะเจอหรือหมดเวลา ค่อยไป ELSE — กันหน้าต่างเด้งช้าแล้วหลุดไป else ผิด",
+                     fg="gray", font=("Segoe UI", 8)).pack(anchor="w")
             NestedStepsEditor(self._fields_frame, self._then, "THEN — ทำเมื่อ 'เจอ' รูป:", height=4,
-                              csv_columns=self._csv_columns, variables=self._variables, capture_dir=self._capture_dir).pack(fill="both", expand=True, pady=(8, 2))
+                              csv_columns=self._csv_columns, variables=self._variables, capture_dir=self._capture_dir,
+                              loop_names=self._loop_names).pack(fill="both", expand=True, pady=(8, 2))
             NestedStepsEditor(self._fields_frame, self._else, "ELSE — ทำเมื่อ 'ไม่เจอ' รูป:", height=4,
-                              csv_columns=self._csv_columns, variables=self._variables, capture_dir=self._capture_dir).pack(fill="both", expand=True, pady=2)
+                              csv_columns=self._csv_columns, variables=self._variables, capture_dir=self._capture_dir,
+                              loop_names=self._loop_names).pack(fill="both", expand=True, pady=2)
 
         elif action == "switch_image":
             self._add_field("confidence", "Confidence (default):", default=str(self._step.get("confidence", 0.85)))
+            self._add_field("wait", "รอรูปก่อนตัดสิน (s):", default=str(self._step.get("wait", 0)),
+                            tooltip=TT_STEP["wait_before_decide"])
             tk.Label(self._fields_frame,
-                     text="  ไล่เช็ก case จากบนลงล่าง — เจอรูปแรกที่ตรง รัน case นั้น; ไม่เข้าเลย → default",
-                     fg="gray", font=("Segoe UI", 8)).pack(anchor="w")
+                     text="  ไล่เช็ก case จากบนลงล่าง — เจอรูปแรกที่ตรง รัน case นั้น; ไม่เข้าเลย → default\n"
+                          "  wait: 0 = เช็คทันทีครั้งเดียว (default) / >0 = รอจนกว่าจะมี case ไหนตรงหรือหมดเวลา",
+                     fg="gray", font=("Segoe UI", 8), justify="left").pack(anchor="w")
             self._build_cases_editor()
             NestedStepsEditor(self._fields_frame, self._default, "DEFAULT — ทำเมื่อไม่เข้า case ใด:", height=3,
-                              csv_columns=self._csv_columns, variables=self._variables, capture_dir=self._capture_dir).pack(fill="both", expand=True, pady=(8, 2))
+                              csv_columns=self._csv_columns, variables=self._variables, capture_dir=self._capture_dir,
+                              loop_names=self._loop_names).pack(fill="both", expand=True, pady=(8, 2))
+
+        elif action == "call_loop":
+            self._add_dropdown("loop", "เรียก Loop:", self._loop_names,
+                               default=self._step.get("loop", ""), readonly=True,
+                               tooltip=TT_STEP["call_loop_target"])
+            tk.Label(self._fields_frame,
+                     text="  รัน step ทั้งหมดของ loop นี้เหมือนเป็น subroutine แล้วกลับมาทำ step ถัดไป\n"
+                          "  หมายเหตุ: ใช้แถว CSV ปัจจุบันร่วมกัน + ตัวแปรเฉพาะของ loop ที่ถูกเรียกถูกใช้ระหว่างรัน\n"
+                          "  แต่ไม่สน data_source/on_row_error/setup_steps ของ loop ที่ถูกเรียก",
+                     fg="gray", font=("Segoe UI", 8), justify="left").pack(anchor="w")
+            if not self._loop_names:
+                tk.Label(self._fields_frame, text="  ⚠️ ยังไม่มี loop อื่นให้เรียก — สร้าง loop เพิ่มก่อน",
+                         fg="#ce9178", font=("Segoe UI", 8)).pack(anchor="w")
 
         elif action == "write_row":
             row = tk.Frame(self._fields_frame)
@@ -426,7 +506,9 @@ class StepDialog(tk.Toplevel):
             tk.Label(row, text="ไฟล์ปลายทาง:", width=18, anchor="w").pack(side="left")
             pvar = tk.StringVar(value=self._step.get("path", ""))
             tk.Entry(row, textvariable=pvar, width=28).pack(side="left", padx=4)
-            tk.Button(row, text="Browse", command=lambda: self._browse_save(pvar)).pack(side="left", padx=2)
+            btn_browse_save = tk.Button(row, text="Browse", command=lambda: self._browse_save(pvar))
+            btn_browse_save.pack(side="left", padx=2)
+            add_tooltip(btn_browse_save, TT_STEP["browse_save_path"])
             self._fields["path"] = pvar
             self._add_field("columns", "คอลัมน์ (คั่น ,):", default=self._list_default("columns"))
             tk.Label(self._fields_frame,
@@ -487,8 +569,10 @@ class StepDialog(tk.Toplevel):
         self._add_field("timeout", "Timeout (s):", default=str(self._step.get("timeout", 10)))
         row = tk.Frame(self._fields_frame)
         row.pack(fill="x", pady=4)
-        tk.Button(row, text="🔍 จิ้ม element", bg="#dcdcaa",
-                  command=self._inspect_element).pack(side="left", padx=4)
+        btn_inspect = tk.Button(row, text="🔍 จิ้ม element", bg="#dcdcaa",
+                  command=self._inspect_element)
+        btn_inspect.pack(side="left", padx=4)
+        add_tooltip(btn_inspect, TT_STEP["inspect_element"])
         tk.Label(row, text="กดแล้วเอาเมาส์ชี้ element เป้าหมาย (มีนับถอยหลัง)",
                  fg="gray", font=("Segoe UI", 8)).pack(side="left", padx=4)
 
@@ -499,8 +583,10 @@ class StepDialog(tk.Toplevel):
         tk.Label(row, text=label, width=18, anchor="w").pack(side="left")
         var = tk.StringVar(value=self._step.get(key, ""))
         tk.Entry(row, textvariable=var, width=32).pack(side="left", padx=4)
-        tk.Button(row, text="🔍 จิ้ม SAP field", bg="#dcdcaa",
-                  command=lambda: self._pick_sap_field(var)).pack(side="left", padx=2)
+        btn_pick_sap = tk.Button(row, text="🔍 จิ้ม SAP field", bg="#dcdcaa",
+                  command=lambda: self._pick_sap_field(var))
+        btn_pick_sap.pack(side="left", padx=2)
+        add_tooltip(btn_pick_sap, TT_STEP["sap_pick_field"])
         self._fields[key] = var
 
     def _pick_sap_field(self, var: tk.StringVar):
@@ -596,11 +682,21 @@ class StepDialog(tk.Toplevel):
 
         ctrl = tk.Frame(wrap)
         ctrl.pack(fill="x", padx=4, pady=2)
-        tk.Button(ctrl, text="+ Case", width=8, command=self._add_case).pack(side="left", padx=2)
-        tk.Button(ctrl, text="Edit", width=6, command=self._edit_case).pack(side="left", padx=2)
-        tk.Button(ctrl, text="↑", width=3, command=lambda: self._move_case(-1)).pack(side="left", padx=1)
-        tk.Button(ctrl, text="↓", width=3, command=lambda: self._move_case(1)).pack(side="left", padx=1)
-        tk.Button(ctrl, text="Del", width=5, fg="red", command=self._del_case).pack(side="left", padx=2)
+        btn_add_case = tk.Button(ctrl, text="+ Case", width=8, command=self._add_case)
+        btn_add_case.pack(side="left", padx=2)
+        add_tooltip(btn_add_case, TT_STEP["add_case"])
+        btn_edit_case = tk.Button(ctrl, text="Edit", width=6, command=self._edit_case)
+        btn_edit_case.pack(side="left", padx=2)
+        add_tooltip(btn_edit_case, TT_STEP["edit_case"])
+        btn_case_up = tk.Button(ctrl, text="↑", width=3, command=lambda: self._move_case(-1))
+        btn_case_up.pack(side="left", padx=1)
+        add_tooltip(btn_case_up, TT_STEP["move_case_up"])
+        btn_case_down = tk.Button(ctrl, text="↓", width=3, command=lambda: self._move_case(1))
+        btn_case_down.pack(side="left", padx=1)
+        add_tooltip(btn_case_down, TT_STEP["move_case_down"])
+        btn_del_case = tk.Button(ctrl, text="Del", width=5, fg="red", command=self._del_case)
+        btn_del_case.pack(side="left", padx=2)
+        add_tooltip(btn_del_case, TT_STEP["delete_case"])
         self._refresh_cases()
 
     def _refresh_cases(self):
@@ -610,7 +706,8 @@ class StepDialog(tk.Toplevel):
             self._cases_listbox.insert("end", f" {i:2d}. {target}  ({len(case.get('steps', []))} steps)")
 
     def _add_case(self):
-        dlg = CaseDialog(self, csv_columns=self._csv_columns, variables=self._variables, capture_dir=self._capture_dir)
+        dlg = CaseDialog(self, csv_columns=self._csv_columns, variables=self._variables,
+                         capture_dir=self._capture_dir, loop_names=self._loop_names)
         self.wait_window(dlg)
         if dlg.get_result():
             self._cases.append(dlg.get_result())
@@ -621,7 +718,8 @@ class StepDialog(tk.Toplevel):
         if not sel:
             return
         idx = sel[0]
-        dlg = CaseDialog(self, self._cases[idx], csv_columns=self._csv_columns, variables=self._variables, capture_dir=self._capture_dir)
+        dlg = CaseDialog(self, self._cases[idx], csv_columns=self._csv_columns, variables=self._variables,
+                         capture_dir=self._capture_dir, loop_names=self._loop_names)
         self.wait_window(dlg)
         if dlg.get_result():
             self._cases[idx] = dlg.get_result()
@@ -646,23 +744,36 @@ class StepDialog(tk.Toplevel):
         self._cases.pop(sel[0])
         self._refresh_cases()
 
-    def _add_field(self, key: str, label: str, default: str = "", browse: bool = False):
+    def _add_field(self, key: str, label: str, default: str = "", browse: bool = False,
+                   tooltip: str = None):
         row = tk.Frame(self._fields_frame)
         row.pack(fill="x", pady=2)
         tk.Label(row, text=label, width=18, anchor="w").pack(side="left")
         var = tk.StringVar(value=self._step.get(key, default))
         entry = tk.Entry(row, textvariable=var, width=28)
         entry.pack(side="left", padx=4)
+        if tooltip:
+            add_tooltip(entry, tooltip)
         if browse:
-            tk.Button(
+            btn_browse = tk.Button(
                 row, text="Browse",
                 command=lambda: self._browse(var),
-            ).pack(side="left", padx=2)
-            tk.Button(
+            )
+            btn_browse.pack(side="left", padx=2)
+            add_tooltip(btn_browse, TT_STEP["browse"])
+            btn_capture = tk.Button(
                 row, text="📷 Capture",
                 bg="#569cd6", fg="white",
                 command=lambda: self._capture(var),
-            ).pack(side="left", padx=2)
+            )
+            btn_capture.pack(side="left", padx=2)
+            add_tooltip(btn_capture, TT_STEP["capture_image"])
+            btn_preview = tk.Button(
+                row, text="👁 Preview",
+                command=lambda: _show_image_preview(self, var.get()),
+            )
+            btn_preview.pack(side="left", padx=2)
+            add_tooltip(btn_preview, TT_STEP["preview_image"])
         self._fields[key] = var
 
     def _add_csv_column_picker(self):
@@ -675,8 +786,10 @@ class StepDialog(tk.Toplevel):
         col_var = tk.StringVar(value=self._csv_columns[0])
         ttk.Combobox(row, textvariable=col_var, values=self._csv_columns,
                      state="readonly", width=20).pack(side="left", padx=4)
-        tk.Button(row, text="+ ใส่ {csv.X}",
-                  command=lambda: self._insert_csv_var(col_var.get())).pack(side="left", padx=4)
+        btn_insert_csv = tk.Button(row, text="+ ใส่ {csv.X}",
+                  command=lambda: self._insert_csv_var(col_var.get()))
+        btn_insert_csv.pack(side="left", padx=4)
+        add_tooltip(btn_insert_csv, TT_STEP["csv_column_insert"])
 
     def _insert_csv_var(self, col: str):
         var = self._fields.get("text")
@@ -693,8 +806,10 @@ class StepDialog(tk.Toplevel):
         var_sel = tk.StringVar(value=self._variables[0])
         ttk.Combobox(row, textvariable=var_sel, values=self._variables,
                      state="readonly", width=22).pack(side="left", padx=4)
-        tk.Button(row, text="+ ใส่ {VAR}",
-                  command=lambda: self._insert_var(var_sel.get())).pack(side="left", padx=4)
+        btn_insert_var = tk.Button(row, text="+ ใส่ {VAR}",
+                  command=lambda: self._insert_var(var_sel.get()))
+        btn_insert_var.pack(side="left", padx=4)
+        add_tooltip(btn_insert_var, TT_STEP["variable_insert"])
 
     def _insert_var(self, display: str):
         # display อาจมีสัญลักษณ์ scope นำหน้า (🌐/📍) — เอาเฉพาะชื่อตัวแปรตัวสุดท้าย
@@ -704,7 +819,7 @@ class StepDialog(tk.Toplevel):
             var.set(var.get() + f"{{{name}}}")
 
     def _add_dropdown(self, key: str, label: str, options: list, default: str = "",
-                      readonly: bool = False):
+                      readonly: bool = False, tooltip: str = None):
         # ใช้ค่า default ที่ผู้เรียกคำนวณมาตรงๆ — อย่าไปอ่าน self._step ทับ
         # (สำคัญกับ clear_first ที่เก็บเป็น bool แต่ dropdown ใช้ "yes"/"no")
         row = tk.Frame(self._fields_frame)
@@ -712,8 +827,11 @@ class StepDialog(tk.Toplevel):
         tk.Label(row, text=label, width=18, anchor="w").pack(side="left")
         var = tk.StringVar(value=default)
         state = "readonly" if readonly else "normal"
-        ttk.Combobox(row, textvariable=var, values=options, width=20,
-                     state=state).pack(side="left", padx=4)
+        combo = ttk.Combobox(row, textvariable=var, values=options, width=20,
+                     state=state)
+        combo.pack(side="left", padx=4)
+        if tooltip:
+            add_tooltip(combo, tooltip)
         self._fields[key] = var
 
     def _add_region_field(self, key: str, label: str):
@@ -724,8 +842,10 @@ class StepDialog(tk.Toplevel):
         default = ",".join(str(n) for n in existing) if existing else ""
         var = tk.StringVar(value=default)
         tk.Entry(row, textvariable=var, width=20).pack(side="left", padx=4)
-        tk.Button(row, text="เลือก Region", bg="#569cd6", fg="white",
-                  command=lambda: self._pick_region(var)).pack(side="left", padx=2)
+        btn_pick_region = tk.Button(row, text="เลือก Region", bg="#569cd6", fg="white",
+                  command=lambda: self._pick_region(var))
+        btn_pick_region.pack(side="left", padx=2)
+        add_tooltip(btn_pick_region, TT_STEP["region_pick"])
         tk.Label(self._fields_frame, text="  รูปแบบ: x,y,w,h (เว้นว่างถ้าไม่ใช้)",
                  fg="gray", font=("Segoe UI", 8)).pack(anchor="w")
         self._fields[key] = var
@@ -749,8 +869,10 @@ class StepDialog(tk.Toplevel):
         row = tk.Frame(self._fields_frame)
         row.pack(fill="x", pady=4)
         tk.Label(row, text="จุดที่จะกด:", width=18, anchor="w").pack(side="left")
-        tk.Button(row, text="🎯 เลือกจุดกด", bg="#dcdcaa",
-                  command=self._pick_position).pack(side="left", padx=4)
+        btn_pick_pos = tk.Button(row, text="🎯 เลือกจุดกด", bg="#dcdcaa",
+                  command=self._pick_position)
+        btn_pick_pos.pack(side="left", padx=4)
+        add_tooltip(btn_pick_pos, TT_STEP["pick_position"])
         self._offset_label = tk.Label(row, text="", fg="#0e639c")
         self._offset_label.pack(side="left", padx=6)
         self._update_offset_label()
@@ -824,7 +946,7 @@ class StepDialog(tk.Toplevel):
                 step.pop(key, None)
                 continue
             if key in ("timeout", "seconds", "x", "y", "clicks", "src_x", "src_y",
-                       "dst_x", "dst_y", "max_attempts", "min_chars", "delay"):
+                       "dst_x", "dst_y", "max_attempts", "min_chars", "delay", "wait"):
                 try:
                     step[key] = float(val) if "." in val else int(val)
                 except ValueError:
@@ -892,12 +1014,14 @@ class NestedStepsEditor(tk.Frame):
     เปิด StepDialog ซ้ำแบบ recursive (StepDialog เป็น modal grab_set ซ้อนกันได้)"""
 
     def __init__(self, parent, steps: list, title: str, height: int = 5,
-                 csv_columns: list = None, variables: list = None, capture_dir: str = "elements"):
+                 csv_columns: list = None, variables: list = None, capture_dir: str = "elements",
+                 loop_names: list = None):
         super().__init__(parent)
         self._steps = steps  # อ้างถึง list เดิม → แก้ใน place
         self._csv_columns = csv_columns or []
         self._variables = variables or []
         self._capture_dir = capture_dir or "elements"
+        self._loop_names = loop_names or []
 
         tk.Label(self, text=title, anchor="w", fg="#0e639c",
                  font=("Segoe UI", 9, "bold")).pack(fill="x")
@@ -917,11 +1041,21 @@ class NestedStepsEditor(tk.Frame):
 
         ctrl = tk.Frame(self)
         ctrl.pack(fill="x", pady=2)
-        tk.Button(ctrl, text="+ Add", width=7, command=self._add).pack(side="left", padx=2)
-        tk.Button(ctrl, text="Edit", width=6, command=self._edit).pack(side="left", padx=2)
-        tk.Button(ctrl, text="↑", width=3, command=self._up).pack(side="left", padx=1)
-        tk.Button(ctrl, text="↓", width=3, command=self._down).pack(side="left", padx=1)
-        tk.Button(ctrl, text="Del", width=5, fg="red", command=self._del).pack(side="left", padx=2)
+        btn_add = tk.Button(ctrl, text="+ Add", width=7, command=self._add)
+        btn_add.pack(side="left", padx=2)
+        add_tooltip(btn_add, "เพิ่ม step ย่อยเข้าในลิสต์นี้")
+        btn_edit = tk.Button(ctrl, text="Edit", width=6, command=self._edit)
+        btn_edit.pack(side="left", padx=2)
+        add_tooltip(btn_edit, "แก้ไข step ที่เลือก (หรือดับเบิลคลิก)")
+        btn_up = tk.Button(ctrl, text="↑", width=3, command=self._up)
+        btn_up.pack(side="left", padx=1)
+        add_tooltip(btn_up, "ย้าย step ขึ้น")
+        btn_down = tk.Button(ctrl, text="↓", width=3, command=self._down)
+        btn_down.pack(side="left", padx=1)
+        add_tooltip(btn_down, "ย้าย step ลง")
+        btn_del = tk.Button(ctrl, text="Del", width=5, fg="red", command=self._del)
+        btn_del.pack(side="left", padx=2)
+        add_tooltip(btn_del, "ลบ step ที่เลือกทิ้ง")
 
         self._refresh()
 
@@ -932,7 +1066,8 @@ class NestedStepsEditor(tk.Frame):
 
     def _open_dialog(self, step: dict = None) -> dict | None:
         dlg = StepDialog(self.winfo_toplevel(), step,
-                         csv_columns=self._csv_columns, variables=self._variables, capture_dir=self._capture_dir)
+                         csv_columns=self._csv_columns, variables=self._variables, capture_dir=self._capture_dir,
+                         loop_names=self._loop_names)
         self.wait_window(dlg)
         return dlg.get_result()
 
@@ -988,7 +1123,7 @@ class CaseDialog(tk.Toplevel):
     """แก้ไข 1 case ของ switch_image: target + confidence + steps"""
 
     def __init__(self, parent, case: dict = None, csv_columns: list = None,
-                 variables: list = None, capture_dir: str = "elements"):
+                 variables: list = None, capture_dir: str = "elements", loop_names: list = None):
         super().__init__(parent)
         self.title("แก้ไข Case" if case else "เพิ่ม Case")
         self.grab_set()
@@ -997,6 +1132,7 @@ class CaseDialog(tk.Toplevel):
         self._csv_columns = csv_columns or []
         self._variables = variables or []
         self._capture_dir = capture_dir or "elements"
+        self._loop_names = loop_names or []
         self._steps = copy.deepcopy(self._case.get("steps", []))
         self._build()
         self._center()
@@ -1008,9 +1144,17 @@ class CaseDialog(tk.Toplevel):
         tk.Label(row, text="Image file:", width=12, anchor="w").pack(side="left")
         self._target_var = tk.StringVar(value=self._case.get("target", ""))
         tk.Entry(row, textvariable=self._target_var, width=28).pack(side="left", padx=4)
-        tk.Button(row, text="Browse", command=self._browse).pack(side="left", padx=2)
-        tk.Button(row, text="📷 Capture", bg="#569cd6", fg="white",
-                  command=self._capture).pack(side="left", padx=2)
+        btn_case_browse = tk.Button(row, text="Browse", command=self._browse)
+        btn_case_browse.pack(side="left", padx=2)
+        add_tooltip(btn_case_browse, TT_STEP["browse"])
+        btn_case_capture = tk.Button(row, text="📷 Capture", bg="#569cd6", fg="white",
+                  command=self._capture)
+        btn_case_capture.pack(side="left", padx=2)
+        add_tooltip(btn_case_capture, TT_STEP["capture_image"])
+        btn_case_preview = tk.Button(row, text="👁 Preview",
+                  command=lambda: _show_image_preview(self, self._target_var.get()))
+        btn_case_preview.pack(side="left", padx=2)
+        add_tooltip(btn_case_preview, TT_STEP["preview_image"])
 
         row2 = tk.Frame(self)
         row2.pack(fill="x", **pad)
@@ -1021,13 +1165,18 @@ class CaseDialog(tk.Toplevel):
                  font=("Segoe UI", 8)).pack(side="left", padx=4)
 
         NestedStepsEditor(self, self._steps, "Steps ของ case นี้:", height=5,
-                          csv_columns=self._csv_columns, variables=self._variables, capture_dir=self._capture_dir).pack(
+                          csv_columns=self._csv_columns, variables=self._variables, capture_dir=self._capture_dir,
+                          loop_names=self._loop_names).pack(
             fill="both", expand=True, padx=10, pady=4)
 
         btn = tk.Frame(self)
         btn.pack(pady=8)
-        tk.Button(btn, text="บันทึก", width=10, bg="#4ec9b0", command=self._save).pack(side="left", padx=6)
-        tk.Button(btn, text="ยกเลิก", width=10, command=self.destroy).pack(side="left", padx=6)
+        btn_save_case = tk.Button(btn, text="บันทึก", width=10, bg="#4ec9b0", command=self._save)
+        btn_save_case.pack(side="left", padx=6)
+        add_tooltip(btn_save_case, TT_STEP["save"])
+        btn_cancel_case = tk.Button(btn, text="ยกเลิก", width=10, command=self.destroy)
+        btn_cancel_case.pack(side="left", padx=6)
+        add_tooltip(btn_cancel_case, TT_STEP["cancel"])
 
     def _browse(self):
         initial = self._capture_dir if os.path.isdir(self._capture_dir) else "elements"
@@ -1085,7 +1234,8 @@ class CaseDialog(tk.Toplevel):
 
 class LoopSettingsDialog(tk.Toplevel):
     def __init__(self, parent, loop_name: str, loop_config: dict,
-                 csv_columns: list = None, variables: list = None, capture_dir: str = "elements"):
+                 csv_columns: list = None, variables: list = None, capture_dir: str = "elements",
+                 loop_names: list = None):
         super().__init__(parent)
         self.title(f"ตั้งค่า Loop: {loop_name}")
         self.resizable(True, True)
@@ -1095,7 +1245,9 @@ class LoopSettingsDialog(tk.Toplevel):
         self._csv_columns = csv_columns or []
         self._variables = variables or []
         self._capture_dir = capture_dir or "elements"
+        self._loop_names = loop_names or []
         self._recovery_steps = copy.deepcopy(loop_config.get("recovery_steps", []) or [])
+        self._setup_steps = copy.deepcopy(loop_config.get("setup_steps", []) or [])
         self._build()
         self._center()
 
@@ -1106,9 +1258,35 @@ class LoopSettingsDialog(tk.Toplevel):
         row1.pack(fill="x", **pad)
         tk.Label(row1, text="CSV Data Source:", width=18, anchor="w").pack(side="left")
         self._csv_var = tk.StringVar(value=self._cfg.get("data_source", ""))
-        tk.Entry(row1, textvariable=self._csv_var, width=30).pack(side="left", padx=4)
-        tk.Button(row1, text="Browse", command=self._browse_csv).pack(side="left")
+        csv_entry = tk.Entry(row1, textvariable=self._csv_var, width=30)
+        csv_entry.pack(side="left", padx=4)
+        add_tooltip(csv_entry, TT_LOOP["csv_data_source"])
+        btn_browse_csv = tk.Button(row1, text="Browse", command=self._browse_csv)
+        btn_browse_csv.pack(side="left")
+        add_tooltip(btn_browse_csv, TT_LOOP["browse_csv"])
         tk.Label(self, text="  เว้นว่างถ้าไม่ต้อง loop CSV", fg="gray", font=("Segoe UI", 8)).pack(anchor="w", padx=12)
+
+        # ─── Setup Steps — รันครั้งเดียวก่อนแถวแรก ─────────────────────────────
+        setup_frame = tk.LabelFrame(
+            self, text="Setup Steps — รันครั้งเดียวก่อนเริ่ม (เช่น login)",
+            fg="#0e639c", font=("Segoe UI", 9, "bold"),
+        )
+        setup_frame.pack(fill="both", expand=True, padx=12, pady=(4, 4))
+        add_tooltip(setup_frame, TT_LOOP["setup_steps"])
+        tk.Label(
+            setup_frame,
+            text="  รันก่อนแถว CSV แถวแรกเท่านั้น (ยังใช้ {csv.X} ไม่ได้ตอนนี้) — ถ้า step พลาด จะหยุดทั้งงานทันที",
+            fg="gray", font=("Segoe UI", 8),
+        ).pack(anchor="w", padx=8)
+        NestedStepsEditor(
+            setup_frame, self._setup_steps, "Setup Steps:",
+            height=4,
+            csv_columns=self._csv_columns,
+            variables=self._variables,
+            capture_dir=self._capture_dir,
+            loop_names=self._loop_names,
+        ).pack(fill="both", expand=True, padx=8, pady=(4, 8))
+        # ──────────────────────────────────────────────────────────────────────
 
         row2 = tk.Frame(self)
         row2.pack(fill="x", **pad)
@@ -1120,6 +1298,7 @@ class LoopSettingsDialog(tk.Toplevel):
         )
         self._err_combo.pack(side="left", padx=4)
         self._err_combo.bind("<<ComboboxSelected>>", lambda e: self._on_policy_change())
+        add_tooltip(self._err_combo, TT_LOOP["on_row_error"])
         tk.Label(self, text="  stop = หยุดทั้งงาน / skip = ข้ามแถว / recover = กู้คืนอัตโนมัติ",
                  fg="gray", font=("Segoe UI", 8)).pack(anchor="w", padx=12)
 
@@ -1128,13 +1307,18 @@ class LoopSettingsDialog(tk.Toplevel):
             self, text="การกู้คืนอัตโนมัติ (recover mode)",
             fg="#0e639c", font=("Segoe UI", 9, "bold"),
         )
+        add_tooltip(self._recover_frame, TT_LOOP["recovery_steps"])
 
         el_row = tk.Frame(self._recover_frame)
         el_row.pack(fill="x", padx=8, pady=4)
         tk.Label(el_row, text="บันทึก error ที่:", width=18, anchor="w").pack(side="left")
         self._error_log_var = tk.StringVar(value=self._cfg.get("error_log_path", "data/errors.csv"))
-        tk.Entry(el_row, textvariable=self._error_log_var, width=28).pack(side="left", padx=4)
-        tk.Button(el_row, text="Browse", command=self._browse_error_log).pack(side="left")
+        error_log_entry = tk.Entry(el_row, textvariable=self._error_log_var, width=28)
+        error_log_entry.pack(side="left", padx=4)
+        add_tooltip(error_log_entry, TT_LOOP["error_log_path"])
+        btn_browse_error_log = tk.Button(el_row, text="Browse", command=self._browse_error_log)
+        btn_browse_error_log.pack(side="left")
+        add_tooltip(btn_browse_error_log, TT_LOOP["browse_error_log"])
         tk.Label(
             self._recover_frame,
             text="  ไฟล์บันทึกแถวที่พลาด (row_num, timestamp, error) — สร้างอัตโนมัติ",
@@ -1148,13 +1332,18 @@ class LoopSettingsDialog(tk.Toplevel):
             csv_columns=self._csv_columns,
             variables=self._variables,
             capture_dir=self._capture_dir,
+            loop_names=self._loop_names,
         ).pack(fill="both", expand=True, padx=8, pady=(4, 8))
         # ──────────────────────────────────────────────────────────────────────
 
         btn = tk.Frame(self)
         btn.pack(pady=10)
-        tk.Button(btn, text="บันทึก", width=10, bg="#4ec9b0", command=self._save).pack(side="left", padx=6)
-        tk.Button(btn, text="ยกเลิก", width=10, command=self.destroy).pack(side="left", padx=6)
+        btn_save_loop = tk.Button(btn, text="บันทึก", width=10, bg="#4ec9b0", command=self._save)
+        btn_save_loop.pack(side="left", padx=6)
+        add_tooltip(btn_save_loop, TT_STEP["save"])
+        btn_cancel_loop = tk.Button(btn, text="ยกเลิก", width=10, command=self.destroy)
+        btn_cancel_loop.pack(side="left", padx=6)
+        add_tooltip(btn_cancel_loop, TT_STEP["cancel"])
 
         self._on_policy_change()
 
@@ -1211,6 +1400,11 @@ class LoopSettingsDialog(tk.Toplevel):
         else:
             self._result.pop("recovery_steps", None)
 
+        if self._setup_steps:
+            self._result["setup_steps"] = self._setup_steps
+        else:
+            self._result.pop("setup_steps", None)
+
         self.destroy()
 
     def _center(self):
@@ -1254,12 +1448,18 @@ class VariablesDialog(tk.Toplevel):
         self._rows_frame = tk.Frame(self)
         self._rows_frame.pack(fill="both", expand=True, padx=10, pady=4)
 
-        tk.Button(self, text="+ เพิ่มตัวแปร", command=lambda: self._add_row()).pack(anchor="w", padx=10)
+        btn_add_var = tk.Button(self, text="+ เพิ่มตัวแปร", command=lambda: self._add_row())
+        btn_add_var.pack(anchor="w", padx=10)
+        add_tooltip(btn_add_var, "เพิ่มแถวตัวแปรใหม่")
 
         btn = tk.Frame(self)
         btn.pack(pady=10)
-        tk.Button(btn, text="บันทึก", width=10, bg="#4ec9b0", command=self._save).pack(side="left", padx=6)
-        tk.Button(btn, text="ยกเลิก", width=10, command=self.destroy).pack(side="left", padx=6)
+        btn_save_var = tk.Button(btn, text="บันทึก", width=10, bg="#4ec9b0", command=self._save)
+        btn_save_var.pack(side="left", padx=6)
+        add_tooltip(btn_save_var, TT_STEP["save"])
+        btn_cancel_var = tk.Button(btn, text="ยกเลิก", width=10, command=self.destroy)
+        btn_cancel_var.pack(side="left", padx=6)
+        add_tooltip(btn_cancel_var, TT_STEP["cancel"])
 
     def _add_row(self, key: str = "", val: str = ""):
         row = tk.Frame(self._rows_frame)
@@ -1269,7 +1469,9 @@ class VariablesDialog(tk.Toplevel):
         tk.Entry(row, textvariable=kv, width=22).pack(side="left", padx=2)
         tk.Entry(row, textvariable=vv, width=26).pack(side="left", padx=2)
         entry = (kv, vv, row)
-        tk.Button(row, text="ลบ", fg="red", command=lambda: self._del_row(entry)).pack(side="left", padx=4)
+        btn_del_var = tk.Button(row, text="ลบ", fg="red", command=lambda: self._del_row(entry))
+        btn_del_var.pack(side="left", padx=4)
+        add_tooltip(btn_del_var, "ลบตัวแปรแถวนี้")
         self._rows.append(entry)
 
     def _del_row(self, entry):
@@ -1326,30 +1528,48 @@ class StateDialog(tk.Toplevel):
         tk.Label(r2, text="Trigger image:", width=14, anchor="w").pack(side="left")
         self._file_var = tk.StringVar(value=trig.get("file", ""))
         tk.Entry(r2, textvariable=self._file_var, width=26).pack(side="left", padx=4)
-        tk.Button(r2, text="Browse", command=self._browse).pack(side="left", padx=2)
-        tk.Button(r2, text="📷 Capture", bg="#569cd6", fg="white",
-                  command=self._capture).pack(side="left", padx=2)
+        btn_state_browse = tk.Button(r2, text="Browse", command=self._browse)
+        btn_state_browse.pack(side="left", padx=2)
+        add_tooltip(btn_state_browse, TT_STEP["browse"])
+        btn_state_capture = tk.Button(r2, text="📷 Capture", bg="#569cd6", fg="white",
+                  command=self._capture)
+        btn_state_capture.pack(side="left", padx=2)
+        add_tooltip(btn_state_capture, TT_STEP["capture_image"])
+        btn_state_preview = tk.Button(r2, text="👁 Preview",
+                  command=lambda: _show_image_preview(self, self._file_var.get()))
+        btn_state_preview.pack(side="left", padx=2)
+        add_tooltip(btn_state_preview, TT_STEP["preview_image"])
 
         r3 = tk.Frame(self)
         r3.pack(fill="x", **pad)
         tk.Label(r3, text="Confidence:", width=14, anchor="w").pack(side="left")
         self._conf_var = tk.StringVar(value=str(trig.get("confidence", 0.85)))
-        tk.Entry(r3, textvariable=self._conf_var, width=8).pack(side="left", padx=4)
+        conf_entry = tk.Entry(r3, textvariable=self._conf_var, width=8)
+        conf_entry.pack(side="left", padx=4)
+        add_tooltip(conf_entry, "ความมั่นใจขั้นต่ำในการจับคู่รูป (0-1) ยิ่งสูงยิ่งเข้มงวด")
         tk.Label(r3, text="Timeout (s):").pack(side="left", padx=(10, 2))
         self._timeout_var = tk.StringVar(value=str(trig.get("timeout", 15)))
-        tk.Entry(r3, textvariable=self._timeout_var, width=8).pack(side="left", padx=4)
+        timeout_entry = tk.Entry(r3, textvariable=self._timeout_var, width=8)
+        timeout_entry.pack(side="left", padx=4)
+        add_tooltip(timeout_entry, "รอเจอ trigger image นานสุดกี่วินาที ก่อนถือว่าไม่เจอ")
 
         r4 = tk.Frame(self)
         r4.pack(fill="x", **pad)
         tk.Label(r4, text="รัน Loop:", width=14, anchor="w").pack(side="left")
         self._loop_var = tk.StringVar(value=self._state.get("loop", ""))
-        ttk.Combobox(r4, textvariable=self._loop_var, values=self._loop_names,
-                     state="readonly", width=28).pack(side="left", padx=4)
+        loop_combo = ttk.Combobox(r4, textvariable=self._loop_var, values=self._loop_names,
+                     state="readonly", width=28)
+        loop_combo.pack(side="left", padx=4)
+        add_tooltip(loop_combo, "loop ที่จะรันเมื่อเจอ trigger image นี้")
 
         btn = tk.Frame(self)
         btn.pack(pady=10)
-        tk.Button(btn, text="บันทึก", width=10, bg="#4ec9b0", command=self._save).pack(side="left", padx=6)
-        tk.Button(btn, text="ยกเลิก", width=10, command=self.destroy).pack(side="left", padx=6)
+        btn_save_state = tk.Button(btn, text="บันทึก", width=10, bg="#4ec9b0", command=self._save)
+        btn_save_state.pack(side="left", padx=6)
+        add_tooltip(btn_save_state, TT_STEP["save"])
+        btn_cancel_state = tk.Button(btn, text="ยกเลิก", width=10, command=self.destroy)
+        btn_cancel_state.pack(side="left", padx=6)
+        add_tooltip(btn_cancel_state, TT_STEP["cancel"])
 
     def _browse(self):
         path = filedialog.askopenfilename(
@@ -1440,10 +1660,18 @@ class StatesDialog(tk.Toplevel):
 
         ctrl = tk.Frame(self)
         ctrl.pack(fill="x", padx=10, pady=6)
-        tk.Button(ctrl, text="+ Add", width=8, command=self._add).pack(side="left", padx=2)
-        tk.Button(ctrl, text="Edit", width=6, command=self._edit).pack(side="left", padx=2)
-        tk.Button(ctrl, text="Del", width=6, fg="red", command=self._del).pack(side="left", padx=2)
-        tk.Button(ctrl, text="ปิด", width=8, command=self.destroy).pack(side="right", padx=2)
+        btn_add_state = tk.Button(ctrl, text="+ Add", width=8, command=self._add)
+        btn_add_state.pack(side="left", padx=2)
+        add_tooltip(btn_add_state, "เพิ่ม state ใหม่ — ผูก trigger image กับ loop ที่จะรัน")
+        btn_edit_state = tk.Button(ctrl, text="Edit", width=6, command=self._edit)
+        btn_edit_state.pack(side="left", padx=2)
+        add_tooltip(btn_edit_state, "แก้ไข state ที่เลือก (หรือดับเบิลคลิก)")
+        btn_del_state = tk.Button(ctrl, text="Del", width=6, fg="red", command=self._del)
+        btn_del_state.pack(side="left", padx=2)
+        add_tooltip(btn_del_state, "ลบ state ที่เลือกทิ้ง")
+        btn_close_states = tk.Button(ctrl, text="ปิด", width=8, command=self.destroy)
+        btn_close_states.pack(side="right", padx=2)
+        add_tooltip(btn_close_states, "ปิดหน้าต่างนี้")
 
     def _loop_names(self) -> list:
         return list(self._config.get("loops", {}).keys())
@@ -1521,21 +1749,38 @@ class SequenceEditor(tk.Toplevel):
         )
         self._loop_listbox.pack(fill="both", expand=True, padx=6)
         self._loop_listbox.bind("<<ListboxSelect>>", self._on_loop_select)
+        add_tooltip(self._loop_listbox, TT_SEQ["loop_list"])
 
         btn_left = tk.Frame(left, bg="#1e1e1e")
         btn_left.pack(fill="x", pady=6, padx=6)
-        tk.Button(btn_left, text="+ Loop ใหม่", command=self._new_loop).pack(fill="x", pady=2)
-        tk.Button(btn_left, text="ตั้งค่า Loop", command=self._loop_settings).pack(fill="x", pady=2)
-        tk.Button(btn_left, text="ลบ Loop", fg="red", command=self._delete_loop).pack(fill="x", pady=2)
+        btn_new_loop = tk.Button(btn_left, text="+ Loop ใหม่", command=self._new_loop)
+        btn_new_loop.pack(fill="x", pady=2)
+        add_tooltip(btn_new_loop, TT_SEQ["new_loop"])
+        btn_loop_settings = tk.Button(btn_left, text="ตั้งค่า Loop", command=self._loop_settings)
+        btn_loop_settings.pack(fill="x", pady=2)
+        add_tooltip(btn_loop_settings, TT_SEQ["loop_settings"])
+        btn_delete_loop = tk.Button(btn_left, text="ลบ Loop", fg="red", command=self._delete_loop)
+        btn_delete_loop.pack(fill="x", pady=2)
+        add_tooltip(btn_delete_loop, TT_SEQ["delete_loop"])
 
         tk.Frame(btn_left, height=1, bg="#3a3a3a").pack(fill="x", pady=6)
-        tk.Button(btn_left, text="🌐 ตัวแปร Global", command=self._edit_variables).pack(fill="x", pady=2)
-        tk.Button(btn_left, text="📍 ตัวแปร Loop นี้", command=self._edit_loop_variables).pack(fill="x", pady=2)
-        tk.Button(btn_left, text="🖥 States", command=self._edit_states).pack(fill="x", pady=2)
+        btn_global_vars = tk.Button(btn_left, text="🌐 ตัวแปร Global", command=self._edit_variables)
+        btn_global_vars.pack(fill="x", pady=2)
+        add_tooltip(btn_global_vars, TT_SEQ["edit_global_variables"])
+        btn_loop_vars = tk.Button(btn_left, text="📍 ตัวแปร Loop นี้", command=self._edit_loop_variables)
+        btn_loop_vars.pack(fill="x", pady=2)
+        add_tooltip(btn_loop_vars, TT_SEQ["edit_loop_variables"])
+        btn_states = tk.Button(btn_left, text="🖥 States", command=self._edit_states)
+        btn_states.pack(fill="x", pady=2)
+        add_tooltip(btn_states, TT_SEQ["edit_states"])
 
         tk.Frame(btn_left, height=1, bg="#3a3a3a").pack(fill="x", pady=6)
-        tk.Button(btn_left, text="⬆ Export loop", command=self._export_loop).pack(fill="x", pady=2)
-        tk.Button(btn_left, text="⬇ Import loop", command=self._import_loop).pack(fill="x", pady=2)
+        btn_export = tk.Button(btn_left, text="⬆ Export loop", command=self._export_loop)
+        btn_export.pack(fill="x", pady=2)
+        add_tooltip(btn_export, TT_SEQ["export_loop"])
+        btn_import = tk.Button(btn_left, text="⬇ Import loop", command=self._import_loop)
+        btn_import.pack(fill="x", pady=2)
+        add_tooltip(btn_import, TT_SEQ["import_loop"])
 
         # ─ Right panel: steps ─
         right = tk.Frame(self, bg="#2d2d2d")
@@ -1556,6 +1801,7 @@ class SequenceEditor(tk.Toplevel):
         # ปุ่มเปิดไฟล์ตาราง (csv/xlsx) ที่ loop ผูกไว้ — โผล่เฉพาะ loop ที่มี data_source
         self._open_csv_btn = tk.Button(hdr, text="📂 เปิดตาราง", font=("Segoe UI", 8),
                                        command=self._open_csv_file)
+        add_tooltip(self._open_csv_btn, TT_SEQ["open_csv"])
         self._current_csv = ""  # path ของ data_source ของ loop ที่เลือกอยู่
 
         # Steps listbox
@@ -1576,23 +1822,37 @@ class SequenceEditor(tk.Toplevel):
         ctrl = tk.Frame(right, bg="#2d2d2d", pady=6)
         ctrl.pack(fill="x", padx=10)
 
-        tk.Button(ctrl, text="+ Add Step", width=12, bg="#4ec9b0", fg="black",
-                  command=self._add_step).pack(side="left", padx=4)
-        tk.Button(ctrl, text="Edit", width=8, command=self._edit_step).pack(side="left", padx=4)
-        tk.Button(ctrl, text="↑", width=4, command=self._move_up).pack(side="left", padx=2)
-        tk.Button(ctrl, text="↓", width=4, command=self._move_down).pack(side="left", padx=2)
-        tk.Button(ctrl, text="Del", width=6, fg="red", command=self._delete_step).pack(side="left", padx=4)
-        tk.Button(ctrl, text="⏺ Record", width=10, bg="#a00000", fg="white",
-                  command=self._record_steps).pack(side="right", padx=4)
+        btn_add_step = tk.Button(ctrl, text="+ Add Step", width=12, bg="#4ec9b0", fg="black",
+                  command=self._add_step)
+        btn_add_step.pack(side="left", padx=4)
+        add_tooltip(btn_add_step, TT_SEQ["add_step"])
+        btn_edit_step = tk.Button(ctrl, text="Edit", width=8, command=self._edit_step)
+        btn_edit_step.pack(side="left", padx=4)
+        add_tooltip(btn_edit_step, TT_SEQ["edit_step"])
+        btn_step_up = tk.Button(ctrl, text="↑", width=4, command=self._move_up)
+        btn_step_up.pack(side="left", padx=2)
+        add_tooltip(btn_step_up, TT_SEQ["move_up"])
+        btn_step_down = tk.Button(ctrl, text="↓", width=4, command=self._move_down)
+        btn_step_down.pack(side="left", padx=2)
+        add_tooltip(btn_step_down, TT_SEQ["move_down"])
+        btn_delete_step = tk.Button(ctrl, text="Del", width=6, fg="red", command=self._delete_step)
+        btn_delete_step.pack(side="left", padx=4)
+        add_tooltip(btn_delete_step, TT_SEQ["delete_step"])
+        btn_record = tk.Button(ctrl, text="⏺ Record", width=10, bg="#a00000", fg="white",
+                  command=self._record_steps)
+        btn_record.pack(side="right", padx=4)
+        add_tooltip(btn_record, TT_SEQ["record"])
 
         # Save
         save_bar = tk.Frame(right, bg="#007acc", pady=4)
         save_bar.pack(fill="x", side="bottom")
-        tk.Button(
+        btn_save_config = tk.Button(
             save_bar, text="Save Config", width=14,
             bg="#0e639c", fg="white", font=("Segoe UI", 10, "bold"),
             command=self._save_config,
-        ).pack(side="right", padx=10)
+        )
+        btn_save_config.pack(side="right", padx=10)
+        add_tooltip(btn_save_config, TT_SEQ["save_config"])
         self._save_status = tk.Label(save_bar, text="", bg="#007acc", fg="white")
         self._save_status.pack(side="left", padx=10)
 
@@ -1661,6 +1921,7 @@ class SequenceEditor(tk.Toplevel):
             csv_columns=self._loop_csv_columns(),
             variables=self._loop_variables(),
             capture_dir=self._loop_capture_dir(),
+            loop_names=self._all_loop_names(),
         )
         self.wait_window(dlg)
         if dlg.get_result() is not None:
@@ -1742,6 +2003,11 @@ class SequenceEditor(tk.Toplevel):
         if summary["missing"]:
             miss = "\n".join(os.path.basename(m) for m in summary["missing"])
             msg += f"\n\n⚠️ รูปหาย {len(summary['missing'])} ไฟล์ (ไม่ถูกแนบ):\n{miss}"
+        if summary.get("called_loops"):
+            msg += f"\n\nแนบ loop ที่ถูกเรียกด้วย (call_loop): {', '.join(summary['called_loops'])}"
+        if summary.get("missing_loop_refs"):
+            msg += (f"\n\n⚠️ call_loop อ้างถึง loop ที่ไม่มีจริง (ไม่ถูกแนบ): "
+                    f"{', '.join(summary['missing_loop_refs'])}")
         if summary["variables"]:
             msg += f"\n\nตัวแปรที่ปลายทางต้องกรอกค่า: {', '.join(summary['variables'])}"
         messagebox.showinfo("Export", msg, parent=self)
@@ -1765,6 +2031,8 @@ class SequenceEditor(tk.Toplevel):
         msg = f"Import สำเร็จ → loop: {summary['loop_name']}"
         if summary["renamed"]:
             msg += "  (เปลี่ยนชื่อกันซ้ำ)"
+        if summary.get("called_loops"):
+            msg += f"\nLoop ลูกที่เพิ่มมาด้วย (call_loop): {', '.join(summary['called_loops'])}"
         if summary["added_variables"]:
             msg += f"\nตัวแปรที่ต้องไปกรอกค่า: {', '.join(summary['added_variables'])}"
         if summary["states"]:
@@ -1834,13 +2102,19 @@ class SequenceEditor(tk.Toplevel):
         safe = "".join(c if (c.isalnum() or c in "-_") else "_" for c in self._selected_loop)
         return os.path.join("elements", safe)
 
+    def _all_loop_names(self) -> list:
+        """รายชื่อ loop สำหรับ dropdown ของ action call_loop — ตัด loop ที่กำลังแก้อยู่ออก
+        (เรียกตัวเอง = recursion error ตอนรันเสมอ ไม่ควรมีให้เลือก)"""
+        return [n for n in self._config.get("loops", {}) if n != self._selected_loop]
+
     def _add_step(self):
         if not self._selected_loop:
             messagebox.showwarning("", "เลือก loop ก่อน")
             return
         dlg = StepDialog(self, csv_columns=self._loop_csv_columns(),
                          variables=self._loop_variables(),
-                         capture_dir=self._loop_capture_dir())
+                         capture_dir=self._loop_capture_dir(),
+                         loop_names=self._all_loop_names())
         self.wait_window(dlg)
         if dlg.get_result():
             sel = self._step_listbox.curselection()
@@ -1856,7 +2130,8 @@ class SequenceEditor(tk.Toplevel):
         idx = sel[0]
         dlg = StepDialog(self, self._steps()[idx], csv_columns=self._loop_csv_columns(),
                          variables=self._loop_variables(),
-                         capture_dir=self._loop_capture_dir())
+                         capture_dir=self._loop_capture_dir(),
+                         loop_names=self._all_loop_names())
         self.wait_window(dlg)
         if dlg.get_result():
             self._steps()[idx] = dlg.get_result()
