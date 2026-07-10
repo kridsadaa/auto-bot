@@ -8,6 +8,7 @@ import yaml
 
 from engine.data_source import DataSource
 from engine.runtime import apply_window_icon
+from engine.version import __version__
 from engine.interrupt_handler import InterruptHandler, BotStoppedError
 from engine.loop_runner import LoopRunner
 from engine.screen_monitor import ScreenMonitor
@@ -28,7 +29,7 @@ START_COUNTDOWN = 3
 class MainWindow(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Auto Bot")
+        self.title(f"Auto Bot v{__version__}")
         self.geometry("860x560")
         self.minsize(860, 480)
         self.resizable(True, True)
@@ -71,6 +72,10 @@ class MainWindow(tk.Tk):
             header, text="Auto Bot", font=("Segoe UI", 14, "bold"),
             bg="#1e1e1e", fg="white",
         ).pack(side="left", padx=14)
+        tk.Label(
+            header, text=f"v{__version__}", font=("Segoe UI", 9),
+            bg="#1e1e1e", fg="#888888",
+        ).pack(side="right", padx=14)
 
         # --- แถว: รันแบบ (เลือกว่า Start จะทำอะไร) ---
         runmode_bar = tk.Frame(self, bg="#2d2d2d", pady=6)

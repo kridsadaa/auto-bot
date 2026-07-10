@@ -42,6 +42,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Exclude workspace from Windows Defender
+        # Defender real-time protection บน runner ชอบ lock/quarantine .exe ที่เพิ่ง build เสร็จ
+        # (โดยเฉพาะ PyInstaller onefile ที่ไม่ได้ sign) ทำให้ build ล้มเงียบๆ ไม่มี error ชัดเจน
+        shell: pwsh
+        run: Add-MpPreference -ExclusionPath "${{ github.workspace }}"
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -52,6 +58,13 @@ jobs:
           .\.venv\Scripts\python.exe -m pip install --upgrade pip --quiet
           .\.venv\Scripts\python.exe -m pip install -r requirements.txt
           .\.venv\Scripts\python.exe -m pip install pyinstaller
+
+      - name: Stamp version from tag
+        # engine/version.py เก็บ "dev" ใน source เสมอ — แทนที่เป็นเลขจริงจาก tag เฉพาะตอน build .exe
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}" -replace '^v', ''
+          "__version__ = `"$version`"" | Set-Content -Path engine\version.py -Encoding utf8
 
       - name: Build AutoBot.exe
         run: .\.venv\Scripts\python.exe -m PyInstaller auto_bot.spec --clean --noconfirm
