@@ -287,6 +287,10 @@ class LoopRunner:
                 region = None
             has = ocr.region_has_text(region, int(step.get("min_chars", 1)))
             return has if until == "text_filled" else not has
+        if until in ("window_appears", "window_disappears"):
+            from engine import ui_element
+            found = ui_element.window_exists(step["title"])
+            return found if until == "window_appears" else not found
         raise ActionError(f"until ไม่รู้จัก: {until}")
 
     def _do_repeat_key_until(self, step: dict):
@@ -318,6 +322,17 @@ class LoopRunner:
                 return
             time.sleep(0.4)
         raise ActionError(f"wait_text หมดเวลา {timeout}s (mode={step.get('mode', 'filled')})")
+
+    def _do_wait_window(self, step: dict):
+        until = "window_disappears" if step.get("mode") == "disappear" else "window_appears"
+        timeout = float(step.get("timeout", 15))
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            self._interrupt.check()
+            if self._condition_met(step, until):
+                return
+            time.sleep(0.4)
+        raise ActionError(f"wait_window หมดเวลา {timeout}s (mode={step.get('mode', 'appear')})")
 
     def _poll_until(self, check, wait_secs: float):
         """เช็ค check() ทันทีหนึ่งครั้ง; ถ้าไม่ผ่าน (falsy) และ wait_secs > 0
@@ -520,6 +535,8 @@ class LoopRunner:
                     self._selector(step),
                     timeout=step.get("timeout", 15),
                 )
+            elif action == "wait_window":
+                self._do_wait_window(step)
             elif action == "stop_if_image":
                 self._do_stop_if_image(step)
             elif action == "skip_row":

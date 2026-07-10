@@ -57,6 +57,14 @@ def find_element(selector: dict, timeout: float = 10):
         raise ElementNotFoundError(selector, str(e)) from e
 
 
+def window_exists(title: str) -> bool:
+    """เช็คว่ามีหน้าต่างบนสุดที่ title ตรง regex `title` อยู่บนจอไหม (ไม่ raise ถ้าไม่เจอ) — ใช้กับ wait_window"""
+    try:
+        return _desktop().window(title_re=title).exists()
+    except Exception:
+        return False
+
+
 def element_from_point(x: int, y: int) -> dict:
     """อ่าน property ของ element ที่อยู่ใต้พิกัด (x,y) → คืน selector dict สำหรับ inspector"""
     try:

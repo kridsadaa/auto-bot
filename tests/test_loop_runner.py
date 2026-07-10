@@ -492,6 +492,32 @@ def test_wait_text_waits_until_filled(mock_interrupt):
         }]}, ds)
 
 
+# ─── wait_window ─────────────────────────────────────────────────────────────
+
+def test_wait_window_waits_until_appears(mock_interrupt):
+    runner = make_runner(mock_interrupt)
+    ds = DataSource({})
+    with patch("engine.ui_element.window_exists", side_effect=[False, True]) as m, \
+         patch("engine.loop_runner.time.sleep"):
+        runner.run_loop({"steps": [{
+            "action": "wait_window", "title": ".*Notepad.*",
+            "mode": "appear", "timeout": 5,
+        }]}, ds)
+    m.assert_called_with(".*Notepad.*")
+
+
+def test_wait_window_disappear_timeout_raises(mock_interrupt):
+    runner = make_runner(mock_interrupt)
+    ds = DataSource({})
+    with patch("engine.ui_element.window_exists", return_value=True), \
+         patch("engine.loop_runner.time.sleep"):
+        with pytest.raises(RowError):
+            runner.run_loop({"steps": [{
+                "action": "wait_window", "title": ".*Locked.*",
+                "mode": "disappear", "timeout": 0.05,
+            }]}, ds)
+
+
 # ─── Interactive Live Debugger (step-index control via on_debug) ──────────────
 
 def _debug_runner(mock_interrupt, on_debug):
