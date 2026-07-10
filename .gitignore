@@ -1,5 +1,9 @@
 # Config (ข้อมูล credentials - ห้ามขึ้น git)
-config/
+# ใช้ config/* (ไม่ใช่ config/) เพื่อให้บรรทัด ! ด้านล่างยกเว้นไฟล์เดียวได้จริง —
+# git ไม่ไล่เข้าไปเช็ค negation ในไดเรกทอรีที่ถูก exclude ทั้งโฟลเดอร์
+config/*
+# ยกเว้น template ตัวอย่าง — ไม่มี credentials จริง และ auto_bot.spec ต้องใช้ตอน build .exe
+!config/bot_config.example.yaml
 
 # Images ที่ capture ไว้ (เฉพาะเครื่อง)
 triggers/

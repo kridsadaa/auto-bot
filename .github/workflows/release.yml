@@ -42,12 +42,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Exclude workspace from Windows Defender
-        # Defender real-time protection บน runner ชอบ lock/quarantine .exe ที่เพิ่ง build เสร็จ
-        # (โดยเฉพาะ PyInstaller onefile ที่ไม่ได้ sign) ทำให้ build ล้มเงียบๆ ไม่มี error ชัดเจน
-        shell: pwsh
-        run: Add-MpPreference -ExclusionPath "${{ github.workspace }}"
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"

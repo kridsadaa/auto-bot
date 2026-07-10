@@ -1,0 +1,34 @@
+variables:
+  USERNAME: ""        # ใส่ SAP username
+  PASSWORD: ""        # ใส่ SAP password (หรือเว้นว่าง bot จะถามตอน Start)
+  COMPANY_CODE: "1000"
+
+# AI Self-Healing: เมื่อ image matching ล้มเหลว Claude Code จะอ่านหน้าจอแล้วหา element ให้
+# วิธีใช้: เปิด Claude Code แล้วรัน `python ai_heal_watch.py` ทิ้งไว้ในอีก terminal
+ai_heal:
+  enabled: false      # ตั้งเป็น true เพื่อเปิดใช้
+  timeout: 60         # วินาทีที่รอ Claude Code ตอบกลับ
+
+states:
+  - name: "SAP Login"
+    trigger:
+      type: image
+      file: "triggers/sap_login.png"
+      confidence: 0.85
+      timeout: 15
+    loop: "loop_login"
+
+loops:
+  loop_login:
+    steps:
+      - action: click_image
+        target: "elements/username_field.png"
+        timeout: 5
+      - action: type
+        text: "{USERNAME}"
+      - action: key
+        key: "tab"
+      - action: type
+        text: "{PASSWORD}"
+      - action: key
+        key: "enter"
