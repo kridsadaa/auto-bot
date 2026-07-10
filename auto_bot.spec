@@ -53,7 +53,9 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    # UPX บีบ exe ให้เล็กลงแต่เป็น pattern เดียวกับที่มัลแวร์ใช้หลบ signature scan
+    # → Defender/AV ตัวอื่น flag exe ที่ผ่าน UPX บ่อยกว่าปกติ ปิดไว้กันตัวเองโดน false positive
+    upx=False,
     upx_exclude=[],
     runtime_tmpdir=None,
     console=False,       # ซ่อน console window
