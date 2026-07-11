@@ -38,18 +38,27 @@ def _dismiss_scripting_popup(timeout: float = 5) -> bool:
     """ปิด popup "SAP Logon" ที่ถามอนุญาตให้ script คุม SAP GUI Scripting ให้อัตโนมัติ
     (กด OK — selector มาจากการจิ้ม element จริง: window "SAP Logon", auto_id "1",
     name "OK", control_type Button) poll สูงสุด `timeout` วิ
+
+    "SAP Logon" ก็เป็น title ของ SAP Logon pad หลักที่เปิดค้างอยู่ตลอดเวลาด้วย (คนละ
+    instance จาก popup ยืนยัน scripting แต่ title ชนกัน) เลยต้องวนเช็คทุกหน้าต่างที่ title
+    ตรง แทนที่จะผูกกับหน้าต่างแรกที่เจอ — ไม่งั้นจะไปหาปุ่ม OK ผิดหน้าต่าง (ใน pad หลัก
+    ไม่มีปุ่มนี้) แล้ว timeout ทุกครั้งทั้งที่ popup จริงเปิดอยู่ข้างๆ
+
     คืน True ถ้ากดสำเร็จ, False ถ้าไม่เจอ popup เลยภายใน timeout"""
     from engine import ui_element
     deadline = time.time() + timeout
     while time.time() < deadline:
-        if ui_element.window_exists(_SCRIPTING_POPUP_OK["window"]):
+        for win in ui_element.find_all_windows(_SCRIPTING_POPUP_OK["window"]):
             try:
-                btn = ui_element.find_element(_SCRIPTING_POPUP_OK, timeout=1)
-                btn.click_input()
-                get_logger().info("ปิด popup ยืนยัน SAP GUI Scripting อัตโนมัติ (กด OK)")
-                return True
-            except ui_element.ElementNotFoundError:
-                pass
+                btn = win.child_window(auto_id=_SCRIPTING_POPUP_OK["auto_id"],
+                                        title=_SCRIPTING_POPUP_OK["name"],
+                                        control_type=_SCRIPTING_POPUP_OK["control_type"])
+                if btn.exists():
+                    btn.click_input()
+                    get_logger().info("ปิด popup ยืนยัน SAP GUI Scripting อัตโนมัติ (กด OK)")
+                    return True
+            except Exception:
+                continue
         time.sleep(0.3)
     return False
 

@@ -65,6 +65,18 @@ def window_exists(title: str) -> bool:
         return False
 
 
+def find_all_windows(title: str) -> list:
+    """คืน wrapper ของหน้าต่างบนสุด**ทุกอัน**ที่ title ตรง regex `title` (list ว่างถ้าไม่เจอ)
+    ต่างจาก find_element/window_exists ตรงที่ไม่ผูกกับหน้าต่างแรกที่เจอ — จำเป็นเวลามีหลาย
+    หน้าต่าง title ซ้ำกัน (เช่น SAP Logon pad หลักที่เปิดค้างตลอด ชื่อชนกับ popup ยืนยัน
+    scripting ที่ title เดียวกันแต่เป็นคนละ instance)"""
+    try:
+        return [w.wrapper_object() for w in _desktop().windows(title_re=title)]
+    except Exception as e:
+        get_logger().error(f"find_all_windows({title!r}) failed: {e}")
+        return []
+
+
 def element_from_point(x: int, y: int) -> dict:
     """อ่าน property ของ element ที่อยู่ใต้พิกัด (x,y) → คืน selector dict สำหรับ inspector"""
     try:

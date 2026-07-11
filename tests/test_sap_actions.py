@@ -1,6 +1,6 @@
 import time
 
-from engine.sap_actions import SapNotAvailableError, _get_session, pick_field_id
+from engine.sap_actions import SapNotAvailableError, _dismiss_scripting_popup, _get_session, pick_field_id
 
 
 class _FakeElement:
@@ -80,6 +80,48 @@ def test_get_session_retries_after_dismissing_scripting_popup(monkeypatch):
 
     assert _get_session() == "connected-session"
     assert calls["n"] == 2
+
+
+class _FakeButton:
+    def __init__(self, exists=True):
+        self._exists = exists
+        self.clicked = False
+
+    def exists(self):
+        return self._exists
+
+    def click_input(self):
+        self.clicked = True
+
+
+class _FakePopupWindow:
+    def __init__(self, button=None):
+        self._button = button
+
+    def child_window(self, **kw):
+        if self._button is None:
+            raise Exception("ไม่มี child แบบนี้")
+        return self._button
+
+
+def test_dismiss_scripting_popup_skips_pad_window_finds_real_popup(monkeypatch):
+    # จำลอง bug จริงที่เจอ: มี 2 หน้าต่าง title "SAP Logon" ชนกัน — pad หลักที่เปิดค้าง
+    # (ไม่มีปุ่ม OK) กับ popup ยืนยัน scripting ตัวจริง (มีปุ่ม OK) ต้องข้าม pad แล้วเจอ/กด
+    # popup จริงให้ได้ ไม่ใช่ผูกกับหน้าต่างแรกที่เจอแล้ว timeout ทิ้ง
+    real_popup_btn = _FakeButton(exists=True)
+    pad_window = _FakePopupWindow(button=None)
+    popup_window = _FakePopupWindow(button=real_popup_btn)
+
+    monkeypatch.setattr("engine.ui_element.find_all_windows",
+                         lambda title: [pad_window, popup_window])
+
+    assert _dismiss_scripting_popup(timeout=1) is True
+    assert real_popup_btn.clicked is True
+
+
+def test_dismiss_scripting_popup_returns_false_when_no_window_matches(monkeypatch):
+    monkeypatch.setattr("engine.ui_element.find_all_windows", lambda title: [])
+    assert _dismiss_scripting_popup(timeout=0.3) is False
 
 
 def test_get_session_reraises_when_popup_never_found(monkeypatch):
