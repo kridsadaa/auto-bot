@@ -52,6 +52,12 @@ class MainWindow(tk.Tk):
         self._observe_cap = None
         self._observe_store = None
 
+        # เฝ้าปิด popup ยืนยัน SAP GUI Scripting ตลอดอายุแอป — popup โผล่ได้แม้ยังไม่มี
+        # step SAP ทำงาน (เช่น shadow capture attach ตอนเริ่มรัน) และตอนมันค้างอยู่
+        # COM call ฝั่งเราจะถูกบล็อกรอจนกว่าจะมีคนกด OK
+        from engine.sap_actions import start_popup_guard
+        start_popup_guard()
+
         self._build()
         self._poll_log_queue()
 

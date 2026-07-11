@@ -1,3 +1,4 @@
+import threading
 import time
 
 import pytest
@@ -10,9 +11,14 @@ from engine.sap_actions import SapNotAvailableError, _click_scripting_popup_ok, 
 def clear_sap_session_cache():
     # _get_session cache session ต่อ thread — ล้างก่อน/หลังทุก test กัน fake session
     # จาก test ก่อนหน้ารั่วมาถูกใช้ซ้ำ (pytest รันทุก test ใน thread เดียวกัน)
+    # และหยุด popup guard + ล้าง stamp การกด OK กัน state รั่วข้าม test เช่นกัน
     sap_actions._tls.sessions = {}
+    sap_actions.stop_popup_guard()
+    sap_actions._last_popup_click = 0.0
     yield
     sap_actions._tls.sessions = {}
+    sap_actions.stop_popup_guard()
+    sap_actions._last_popup_click = 0.0
 
 
 class _FakeElement:
@@ -234,6 +240,60 @@ def test_get_session_reconnects_when_cached_session_dead(monkeypatch):
 
     assert _get_session() is fresh
     assert sap_actions._tls.sessions[(0, 0)] is fresh
+
+
+def test_popup_guard_clicks_popup_without_any_sap_action(monkeypatch):
+    # guard ระดับแอปต้องกด OK เองแม้ไม่มีใครเรียก _get_session อยู่เลย
+    clicks = {"n": 0}
+
+    def fake_click():
+        clicks["n"] += 1
+        return True
+
+    monkeypatch.setattr("engine.sap_actions._click_scripting_popup_ok", fake_click)
+    sap_actions.start_popup_guard(interval=0.05)
+    deadline = time.time() + 2
+    while clicks["n"] == 0 and time.time() < deadline:
+        time.sleep(0.02)
+    sap_actions.stop_popup_guard()
+    assert clicks["n"] >= 1
+    assert sap_actions._last_popup_click > 0
+
+
+def test_popup_guard_start_is_idempotent(monkeypatch):
+    monkeypatch.setattr("engine.sap_actions._click_scripting_popup_ok", lambda: False)
+    sap_actions.start_popup_guard(interval=0.05)
+    stop_before = sap_actions._guard_stop
+    sap_actions.start_popup_guard(interval=0.05)  # เรียกซ้ำต้องไม่ spawn ใหม่
+    assert sap_actions._guard_stop is stop_before
+    assert sap_actions.popup_guard_running() is True
+    sap_actions.stop_popup_guard()
+    assert sap_actions.popup_guard_running() is False
+
+
+def test_connect_skips_own_watcher_when_guard_running(monkeypatch):
+    # ตอน guard เฝ้าอยู่แล้ว _connect_dismissing_popup ต้องไม่ spawn watcher ซ้ำ
+    # แต่ retry ยังทำงานผ่าน stamp ของ guard ได้เหมือนเดิม
+    calls = {"n": 0}
+
+    def fake_connect(connection_idx, session_idx):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise SapNotAvailableError("popup ค้างอยู่")
+        return "connected-session"
+
+    monkeypatch.setattr("engine.sap_actions._connect_session", fake_connect)
+    monkeypatch.setattr("engine.sap_actions._click_scripting_popup_ok", lambda: True)
+    sap_actions.start_popup_guard(interval=0.05)
+    try:
+        threads_before = {t.name for t in threading.enumerate()}
+        assert _get_session() == "connected-session"
+        assert calls["n"] == 2
+        # ไม่มี thread ชื่อ sap-popup-watcher เกิดใหม่ระหว่างเชื่อม
+        spawned = {t.name for t in threading.enumerate()} - threads_before
+        assert not any("sap-popup-watcher" in n for n in spawned)
+    finally:
+        sap_actions.stop_popup_guard()
 
 
 def test_get_session_caches_per_connection_and_session_index(monkeypatch):

@@ -34,6 +34,16 @@ class SapFieldError(Exception):
 _SCRIPTING_POPUP_OK = {"window": "SAP Logon", "auto_id": "1",
                        "name": "OK", "control_type": "Button"}
 
+# เวลาที่กด OK ให้ popup ยืนยัน scripting ครั้งล่าสุด (stamp โดย watcher/guard ที่จุดเรียก
+# ไม่ stamp ใน _click_scripting_popup_ok เอง เพื่อให้ test mock ฟังก์ชันนั้นได้โดย
+# retry logic ยังทำงาน) — _connect_dismissing_popup ใช้ตัดสินว่าควรเชื่อมซ้ำไหม
+_last_popup_click = 0.0
+
+
+def _note_popup_clicked():
+    global _last_popup_click
+    _last_popup_click = time.time()
+
 
 def _click_scripting_popup_ok() -> bool:
     """สแกนหารอบเดียว: popup "SAP Logon" ที่ถามอนุญาตให้ script คุม SAP GUI Scripting
@@ -75,13 +85,69 @@ def _connect_dismissing_popup(connection_idx: int, session_idx: int):
     thread สแกน/กดไปพร้อมกันระหว่างเชื่อมแทน (watcher ใช้ UIA ล้วน ไม่แตะ COM
     ของ SAP — ห้ามย้ายการเชื่อมเข้า background thread เพราะ GetObject จะค้าง)
 
-    เผื่อกรณี SAP บางเวอร์ชัน raise แทนที่จะค้าง: ถ้าเชื่อมพังแต่ watcher ได้กด OK
-    (หรือกดทันภายในช่วงรอสั้นๆ) จะเชื่อมซ้ำอีกครั้งเดียว — ถ้าไม่มี popup เลย
-    (พังด้วยสาเหตุอื่น เช่น SAP ปิดอยู่) raise ต่อทันทีไม่ retry มั่ว"""
-    stop = threading.Event()
-    clicked = threading.Event()
+    ถ้า popup guard ระดับแอปกำลังเฝ้าอยู่แล้ว (start_popup_guard) จะไม่ spawn
+    watcher ซ้ำ — guard ทำหน้าที่เดียวกันอยู่ตลอดเวลาอยู่แล้ว
 
-    def _watch():
+    เผื่อกรณี SAP บางเวอร์ชัน raise แทนที่จะค้าง: ถ้าเชื่อมพังแต่มีการกด OK เกิดขึ้น
+    ระหว่าง/หลังพยายามเชื่อม (ดูจาก _last_popup_click รอสูงสุด 1.5 วิ) จะเชื่อมซ้ำ
+    อีกครั้งเดียว — ถ้าไม่มี popup เลย (พังด้วยสาเหตุอื่น เช่น SAP ปิดอยู่) raise ต่อ
+    ไม่ retry มั่ว"""
+    t0 = time.time()
+    stop = threading.Event()
+    watcher = None
+    if not popup_guard_running():
+        def _watch():
+            try:
+                import pythoncom
+                pythoncom.CoInitialize()
+            except Exception:
+                pass
+            while not stop.is_set():
+                try:
+                    if _click_scripting_popup_ok():
+                        _note_popup_clicked()
+                except Exception:
+                    pass
+                stop.wait(0.3)
+
+        watcher = threading.Thread(target=_watch, daemon=True, name="sap-popup-watcher")
+        watcher.start()
+    try:
+        try:
+            return _connect_session(connection_idx, session_idx)
+        except SapNotAvailableError:
+            deadline = time.time() + 1.5
+            while time.time() < deadline:
+                if _last_popup_click >= t0:
+                    return _connect_session(connection_idx, session_idx)
+                time.sleep(0.1)
+            raise
+    finally:
+        stop.set()
+        if watcher is not None:
+            watcher.join(timeout=1)  # ตื่นทันทีที่ stop ถูก set — กัน watcher ค้างไปสแกนต่อหลังจบ
+
+
+_guard_lock = threading.Lock()
+_guard_stop: threading.Event | None = None
+
+
+def start_popup_guard(interval: float = 0.7) -> None:
+    """เริ่มเฝ้า popup ยืนยัน SAP scripting **ตลอดอายุแอป** — เจอเมื่อไหร่กด OK ให้ทันที
+    ไม่ว่าจะมี SAP action กำลังเรียกอยู่หรือไม่ (popup โผล่ได้จากทุกการ attach เช่น
+    shadow capture ตอนเริ่มรัน หรือเครื่องมืออื่นในเครื่อง) เรียกซ้ำได้ปลอดภัย —
+    ถ้าเฝ้าอยู่แล้วจะไม่ spawn thread ซ้ำ
+
+    ใช้ UIA ล้วนผ่าน _click_scripting_popup_ok ไม่แตะ COM ของ SAP จึงไม่ชนกับ
+    กติกา threading ของ SAP scripting"""
+    global _guard_stop
+    with _guard_lock:
+        if _guard_stop is not None and not _guard_stop.is_set():
+            return
+        stop = threading.Event()
+        _guard_stop = stop
+
+    def _run():
         try:
             import pythoncom
             pythoncom.CoInitialize()
@@ -90,23 +156,27 @@ def _connect_dismissing_popup(connection_idx: int, session_idx: int):
         while not stop.is_set():
             try:
                 if _click_scripting_popup_ok():
-                    clicked.set()
+                    _note_popup_clicked()
             except Exception:
                 pass
-            stop.wait(0.3)
+            stop.wait(interval)
 
-    watcher = threading.Thread(target=_watch, daemon=True, name="sap-popup-watcher")
-    watcher.start()
-    try:
-        try:
-            return _connect_session(connection_idx, session_idx)
-        except SapNotAvailableError:
-            if clicked.is_set() or clicked.wait(1.5):
-                return _connect_session(connection_idx, session_idx)
-            raise
-    finally:
-        stop.set()
-        watcher.join(timeout=1)  # ตื่นทันทีที่ stop ถูก set — กัน watcher ค้างไปสแกนต่อหลังจบ
+    threading.Thread(target=_run, daemon=True, name="sap-popup-guard").start()
+    get_logger().info("เริ่มเฝ้า popup ยืนยัน SAP GUI Scripting (กด OK ให้อัตโนมัติ)")
+
+
+def stop_popup_guard() -> None:
+    """หยุด popup guard (ใช้ใน test / ตอนปิดแอป — thread เป็น daemon ตายเองอยู่แล้ว)"""
+    global _guard_stop
+    with _guard_lock:
+        if _guard_stop is not None:
+            _guard_stop.set()
+            _guard_stop = None
+
+
+def popup_guard_running() -> bool:
+    stop = _guard_stop
+    return stop is not None and not stop.is_set()
 
 
 def _connect_session(connection_idx: int, session_idx: int):
