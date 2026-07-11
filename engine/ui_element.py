@@ -9,6 +9,8 @@ selector dict keys (ใส่เท่าที่จำเป็น):
   control_type  : ชนิด เช่น "Edit", "Button", "CheckBox"
   class_name    : ClassName ของ control
 """
+import time
+
 from engine.logger import get_logger
 
 # map selector key ของเรา → ชื่อ argument ของ pywinauto child_window
@@ -57,23 +59,6 @@ def find_element(selector: dict, timeout: float = 10):
         raise ElementNotFoundError(selector, str(e)) from e
 
 
-def focus_window(title: str, timeout: float = 10):
-    """ดึงหน้าต่างที่ title ตรง regex `title` ขึ้น foreground + ตั้ง keyboard focus
-    ใช้ก่อน step ที่พึ่งคีย์บอร์ดจริง (key/type/hotkey) กัน input หลงไปหน้าต่างอื่นที่
-    เผลอถูก focus ไว้ก่อนหน้า (เช่น popup ที่เพิ่งปิดไป หรือหน้าต่างที่ SAP scripting
-    ใส่ค่าให้โดยไม่ย้าย focus ของ Windows เลย) — คืน wrapper ถ้าสำเร็จ, raise
-    ElementNotFoundError ถ้าหาไม่เจอภายใน timeout"""
-    try:
-        spec = _desktop().window(title_re=title)
-        spec.wait("exists enabled visible ready", timeout=timeout)
-        wrapper = spec.wrapper_object()
-        wrapper.set_focus()
-        return wrapper
-    except Exception as e:
-        get_logger().error(f"focus_window({title!r}) failed: {e}")
-        raise ElementNotFoundError({"window": title}, str(e)) from e
-
-
 def window_exists(title: str) -> bool:
     """เช็คว่ามีหน้าต่างบนสุดที่ title ตรง regex `title` อยู่บนจอไหม (ไม่ raise ถ้าไม่เจอ) — ใช้กับ wait_window"""
     try:
@@ -97,6 +82,34 @@ def find_all_windows(title: str) -> list:
     except Exception as e:
         get_logger().error(f"find_all_windows({title!r}) failed: {e}")
         return []
+
+
+def focus_window(title: str, timeout: float = 10):
+    """ดึงหน้าต่างที่ title ตรง regex `title` ขึ้น foreground + ตั้ง keyboard focus
+    ใช้ก่อน step ที่พึ่งคีย์บอร์ดจริง (key/type/hotkey) กัน input หลงไปหน้าต่างอื่นที่
+    เผลอถูก focus ไว้ก่อนหน้า (เช่น popup ที่เพิ่งปิดไป หรือหน้าต่างที่ SAP scripting
+    ใส่ค่าให้โดยไม่ย้าย focus ของ Windows เลย)
+
+    ใช้ find_all_windows แทน desktop.window(title_re=...) ตรงๆ — ถ้า regex ตรงมากกว่า
+    1 หน้าต่าง (เช่น "SAP" ตรงทั้ง "SAP Logon 760" ที่เปิดค้างตลอดและหน้าต่าง session
+    จริง) desktop.window() จะ raise ambiguity error ทันทีไม่ลองอันไหนเลย (เจอจริงกับ
+    ผู้ใช้) — วนดูทุกหน้าต่างที่ตรงแทน เลือกอันแรกที่ visible+enabled จริง (poll จนกว่า
+    จะเจอหรือหมด timeout เผื่อหน้าต่างยังไม่ทันขึ้น) — คืน wrapper ถ้าสำเร็จ, raise
+    ElementNotFoundError ถ้าไม่มีอันไหนผ่านภายใน timeout"""
+    deadline = time.time() + timeout
+    last_err = "ไม่พบหน้าต่างที่ visible + enabled ตรงเงื่อนไข"
+    while time.time() < deadline:
+        for win in find_all_windows(title):
+            try:
+                wrapper = win.wrapper_object()
+                if wrapper.is_visible() and wrapper.is_enabled():
+                    wrapper.set_focus()
+                    return wrapper
+            except Exception as e:
+                last_err = str(e)
+        time.sleep(0.3)
+    get_logger().error(f"focus_window({title!r}) failed: {last_err}")
+    raise ElementNotFoundError({"window": title}, last_err)
 
 
 def element_from_point(x: int, y: int) -> dict:
