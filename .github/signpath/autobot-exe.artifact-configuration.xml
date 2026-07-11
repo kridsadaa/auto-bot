@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  สำเนาอ้างอิงของ Artifact Configuration ที่ตั้งไว้ใน SignPath dashboard
+  (Project → Artifact Configurations) สำหรับเซ็น AutoBot-vX.Y.Z.exe
+
+  ไฟล์นี้ไม่ได้ถูกใช้โดย release.yml โดยตรง — CI อ้างถึง config ผ่าน
+  artifact-configuration-slug เท่านั้น เก็บไว้เผื่อต้องสร้าง config ใหม่ใน
+  SignPath dashboard (เช่น ย้าย organization/project)
+-->
+<artifact-description xmlns="http://signpath.io/artifact-description/v1">
+  <pe-file>
+    <file-info path="AutoBot-v1.1.3.exe">
+      <before-signing size="121883871" sha-256="26cc92d8a7d1f68341ea4720267c3123eeb6a1cbae40fe2885503f2d7772ef05" />
+      <after-signing size="121892456" sha-256="7b15987214805e60e94fe42b5cb6d50d52b5b2e93af29c37e3ba01591268720d" />
+    </file-info>
+    <authenticode-sign />
+  </pe-file>
+</artifact-description>

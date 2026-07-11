@@ -75,11 +75,31 @@ jobs:
           Write-Output "exe_path=dist\AutoBot-$tag.exe" >> $env:GITHUB_OUTPUT
         id: rename
 
-      - name: Upload exe artifact (ส่งต่อระหว่าง jobs)
+      - name: Upload unsigned exe (ให้ SignPath ดึงไปเซ็น)
+        id: upload-unsigned
+        uses: actions/upload-artifact@v7
+        with:
+          name: autobot-exe-unsigned
+          path: ${{ steps.rename.outputs.exe_path }}
+          retention-days: 1
+
+      - name: Sign exe via SignPath
+        # ไม่ระบุ artifact-configuration-slug — ใช้ default configuration ของ project นี้
+        uses: signpath/github-action-submit-signing-request@v2
+        with:
+          api-token: '${{ secrets.SIGNPATH_API_TOKEN }}'
+          organization-id: '93765c10-4f03-4ae9-a70f-936ba7b6a2b9'
+          project-slug: 'auto-bot'
+          signing-policy-slug: 'auto-bot'
+          github-artifact-id: '${{ steps.upload-unsigned.outputs.artifact-id }}'
+          wait-for-completion: true
+          output-artifact-directory: 'dist-signed'
+
+      - name: Upload signed exe artifact (ส่งต่อระหว่าง jobs)
         uses: actions/upload-artifact@v4
         with:
           name: autobot-exe
-          path: ${{ steps.rename.outputs.exe_path }}
+          path: dist-signed/*
           retention-days: 1
 
   # ─── job 3: สร้าง GitHub Release + แนบ exe ──────────────────────────────
