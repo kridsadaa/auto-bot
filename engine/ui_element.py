@@ -66,12 +66,17 @@ def window_exists(title: str) -> bool:
 
 
 def find_all_windows(title: str) -> list:
-    """คืน wrapper ของหน้าต่างบนสุด**ทุกอัน**ที่ title ตรง regex `title` (list ว่างถ้าไม่เจอ)
-    ต่างจาก find_element/window_exists ตรงที่ไม่ผูกกับหน้าต่างแรกที่เจอ — จำเป็นเวลามีหลาย
-    หน้าต่าง title ซ้ำกัน (เช่น SAP Logon pad หลักที่เปิดค้างตลอด ชื่อชนกับ popup ยืนยัน
-    scripting ที่ title เดียวกันแต่เป็นคนละ instance)"""
+    """คืน WindowSpecification ของหน้าต่างบนสุด**ทุกอัน**ที่ title ตรง regex `title`
+    (list ว่างถ้าไม่เจอ) ต่างจาก find_element/window_exists ตรงที่ไม่ผูกกับหน้าต่างแรก
+    ที่เจอ — จำเป็นเวลามีหลายหน้าต่าง title ซ้ำกัน (เช่น SAP Logon pad หลักที่เปิดค้าง
+    ตลอด ชื่อชนกับ popup ยืนยัน scripting ที่ title เดียวกันแต่เป็นคนละ instance)
+
+    Desktop.windows() คืน UIAWrapper (wrap เสร็จแล้ว ไม่มี .wrapper_object() และไม่มี
+    .child_window()) — ต้องแปลงกลับเป็น spec ที่ผูกกับ handle ของหน้าต่างนั้นๆ เพื่อให้
+    ฝั่งคนเรียกใช้ child_window(...) ต่อได้เหมือน find_element"""
     try:
-        return [w.wrapper_object() for w in _desktop().windows(title_re=title)]
+        desktop = _desktop()
+        return [desktop.window(handle=w.handle) for w in desktop.windows(title_re=title)]
     except Exception as e:
         get_logger().error(f"find_all_windows({title!r}) failed: {e}")
         return []
