@@ -1,6 +1,6 @@
 import time
 
-from engine.sap_actions import pick_field_id
+from engine.sap_actions import SapNotAvailableError, _get_session, pick_field_id
 
 
 class _FakeElement:
@@ -62,3 +62,36 @@ def test_pick_field_id_survives_focus_read_errors(monkeypatch):
 
     monkeypatch.setattr("engine.sap_actions._get_session", lambda *a, **kw: _BrokenSession())
     assert pick_field_id(timeout=0.3) is None
+
+
+def test_get_session_retries_after_dismissing_scripting_popup(monkeypatch):
+    # เชื่อมครั้งแรกพัง (popup "อนุญาต SAP GUI Scripting" ค้างรอกด OK) → ต้องกด OK ให้
+    # แล้วเชื่อมซ้ำอีกครั้งเดียวจนสำเร็จ แทนที่จะโยน error ทิ้งเลย
+    calls = {"n": 0}
+
+    def fake_connect(connection_idx, session_idx):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise SapNotAvailableError("popup ค้างอยู่")
+        return "connected-session"
+
+    monkeypatch.setattr("engine.sap_actions._connect_session", fake_connect)
+    monkeypatch.setattr("engine.sap_actions._dismiss_scripting_popup", lambda *a, **kw: True)
+
+    assert _get_session() == "connected-session"
+    assert calls["n"] == 2
+
+
+def test_get_session_reraises_when_popup_never_found(monkeypatch):
+    # เชื่อมพัง แต่ไม่เจอ popup ให้กด (สาเหตุอื่น เช่น SAP ปิดอยู่จริง) → ต้อง raise ต่อ ไม่ retry เงียบๆ
+    def fake_connect(connection_idx, session_idx):
+        raise SapNotAvailableError("ไม่พบ SAP GUI")
+
+    monkeypatch.setattr("engine.sap_actions._connect_session", fake_connect)
+    monkeypatch.setattr("engine.sap_actions._dismiss_scripting_popup", lambda *a, **kw: False)
+
+    try:
+        _get_session()
+        assert False, "ควร raise SapNotAvailableError"
+    except SapNotAvailableError:
+        pass

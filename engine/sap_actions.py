@@ -30,13 +30,31 @@ class SapFieldError(Exception):
     pass
 
 
-def _get_session(connection_idx: int = 0, session_idx: int = 0):
-    """ดึง SAP GUI session ที่เปิดอยู่ — raise SapNotAvailableError ถ้าเชื่อมไม่ได้
+_SCRIPTING_POPUP_OK = {"window": "SAP Logon", "auto_id": "1",
+                       "name": "OK", "control_type": "Button"}
 
-    COM ต้อง CoInitialize ในทุก thread ที่จะใช้มันก่อน (ไม่ใช่แค่ thread ที่สร้าง object)
-    ฟังก์ชันนี้ถูกเรียกได้ทั้งจาก main thread (SequenceEditor/StepDialog picker) และจาก
-    bot thread (LoopRunner._execute_step) — เรียก CoInitialize() แบบ idempotent กันไว้เผื่อ
-    thread นั้นยังไม่เคย init (เรียกซ้ำใน thread เดิมไม่พัง แค่เป็น no-op)"""
+
+def _dismiss_scripting_popup(timeout: float = 5) -> bool:
+    """ปิด popup "SAP Logon" ที่ถามอนุญาตให้ script คุม SAP GUI Scripting ให้อัตโนมัติ
+    (กด OK — selector มาจากการจิ้ม element จริง: window "SAP Logon", auto_id "1",
+    name "OK", control_type Button) poll สูงสุด `timeout` วิ
+    คืน True ถ้ากดสำเร็จ, False ถ้าไม่เจอ popup เลยภายใน timeout"""
+    from engine import ui_element
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if ui_element.window_exists(_SCRIPTING_POPUP_OK["window"]):
+            try:
+                btn = ui_element.find_element(_SCRIPTING_POPUP_OK, timeout=1)
+                btn.click_input()
+                get_logger().info("ปิด popup ยืนยัน SAP GUI Scripting อัตโนมัติ (กด OK)")
+                return True
+            except ui_element.ElementNotFoundError:
+                pass
+        time.sleep(0.3)
+    return False
+
+
+def _connect_session(connection_idx: int, session_idx: int):
     try:
         import pythoncom
         try:
@@ -57,6 +75,25 @@ def _get_session(connection_idx: int = 0, session_idx: int = 0):
         raise
     except Exception as e:
         raise SapNotAvailableError(f"เชื่อม SAP ไม่ได้: {e}") from e
+
+
+def _get_session(connection_idx: int = 0, session_idx: int = 0):
+    """ดึง SAP GUI session ที่เปิดอยู่ — raise SapNotAvailableError ถ้าเชื่อมไม่ได้
+
+    COM ต้อง CoInitialize ในทุก thread ที่จะใช้มันก่อน (ไม่ใช่แค่ thread ที่สร้าง object)
+    ฟังก์ชันนี้ถูกเรียกได้ทั้งจาก main thread (SequenceEditor/StepDialog picker) และจาก
+    bot thread (LoopRunner._execute_step) — เรียก CoInitialize() แบบ idempotent กันไว้เผื่อ
+    thread นั้นยังไม่เคย init (เรียกซ้ำใน thread เดิมไม่พัง แค่เป็น no-op)
+
+    ถ้าเชื่อมครั้งแรกไม่สำเร็จ (เช่น popup "อนุญาต SAP GUI Scripting" ค้างรอกด OK อยู่)
+    จะลองหา popup นั้นแล้วกด OK ให้ก่อน แล้วเชื่อมซ้ำอีกครั้งเดียว — ไม่กระทบ path ปกติ
+    ที่เชื่อมสำเร็จตั้งแต่ครั้งแรก (ไม่มีการสแกนหา popup เพิ่ม)"""
+    try:
+        return _connect_session(connection_idx, session_idx)
+    except SapNotAvailableError:
+        if _dismiss_scripting_popup():
+            return _connect_session(connection_idx, session_idx)
+        raise
 
 
 def is_available() -> bool:
