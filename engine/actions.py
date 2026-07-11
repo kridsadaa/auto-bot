@@ -82,6 +82,32 @@ def click_image(
     raise ImageNotFoundError(template_path, last_screenshot or pyautogui.screenshot())
 
 
+# virtual-key code ของปุ่มที่ใช้ทำ Ctrl+combo — ส่งตรงด้วย keybd_event ไม่ผ่านตาราง map
+_VK_CONTROL = 0x11
+_VK_LETTER = {"a": 0x41, "c": 0x43, "v": 0x56}
+
+
+def _ctrl_combo(letter: str) -> bool:
+    """กด Ctrl+<letter> ด้วย virtual-key code ตรงๆ — ใช้ได้ทุก keyboard layout
+
+    pyautogui map ตัวอักษรเป็นปุ่มผ่าน VkKeyScanA **ครั้งเดียวตอน import** — ถ้าเปิด
+    โปรแกรมตอน layout เป็นไทย (Kedmanee) ตัวอักษรละติน ('v','c','a') จะ map ไม่ได้ (-1)
+    ทำให้ hotkey('ctrl','v') เงียบทั้งเซสชัน **ต่อให้ผู้ใช้สลับภาษากลับแล้วก็ตาม**
+    VK code (เช่น 0x56 = ปุ่ม V ทางกายภาพ) ไม่ขึ้นกับ layout เพราะแอปตีความ
+    Ctrl+ตัวอักษรจาก virtual key ไม่ใช่จากตัวอักษรที่พิมพ์ออกมา"""
+    try:
+        import win32api
+        import win32con
+        vk = _VK_LETTER[letter]
+        win32api.keybd_event(_VK_CONTROL, 0, 0, 0)
+        win32api.keybd_event(vk, 0, 0, 0)
+        win32api.keybd_event(vk, 0, win32con.KEYEVENTF_KEYUP, 0)
+        win32api.keybd_event(_VK_CONTROL, 0, win32con.KEYEVENTF_KEYUP, 0)
+        return True
+    except Exception:
+        return False
+
+
 def _paste_via_clipboard(text: str) -> bool:
     """พิมพ์ผ่าน clipboard (ctrl+v) — เร็ว/ชัวร์กว่าสำหรับ SAP & desktop apps
     คืน False ถ้า pyperclip ใช้ไม่ได้ เพื่อ fallback ไป keyboard.write"""
@@ -92,11 +118,82 @@ def _paste_via_clipboard(text: str) -> bool:
     try:
         pyperclip.copy(text)
         time.sleep(0.05)
-        pyautogui.hotkey("ctrl", "v")
+        if not _ctrl_combo("v"):
+            pyautogui.hotkey("ctrl", "v")  # fallback ถ้า win32api ไม่มี (ดู _ctrl_combo)
         time.sleep(0.05)
         return True
     except Exception:
         return False
+
+
+def _input_context() -> str:
+    """สรุปบริบท input ณ ตอนนี้ไว้ใส่ log: หน้าต่างที่ focus อยู่ + ภาษา keyboard layout
+    **ของหน้าต่างนั้น** (Windows จำภาษาแยกต่อหน้าต่าง — เปลี่ยนภาษาที่หน้าต่างหนึ่ง
+    ไม่ได้เปลี่ยนให้หน้าต่างอื่น) — ปัญหาพิมพ์เพี้ยน/เคลียร์ไม่ออกที่ "เป็นบางครั้ง"
+    ต้องการหลักฐานย้อนหลังว่าตอนนั้น focus อยู่ที่ไหนและภาษาอะไร"""
+    try:
+        import win32api
+        import win32gui
+        import win32process
+        hwnd = win32gui.GetForegroundWindow()
+        title = win32gui.GetWindowText(hwnd) or "?"
+        tid, _pid = win32process.GetWindowThreadProcessId(hwnd)
+        lang_id = win32api.GetKeyboardLayout(tid) & 0xFFFF
+        lang = {0x0409: "EN", 0x041E: "TH"}.get(lang_id, hex(lang_id))
+        return f"focus={title!r} lang={lang}"
+    except Exception:
+        return "focus=?"
+
+
+_CLEAR_SENTINEL = "__autobot_clipboard_sentinel__"
+_CLEAR_MAX_ATTEMPTS = 3
+
+
+def _clear_focused_field():
+    """เคลียร์ค่าในช่องที่โฟกัส (End → Shift+Home → Delete) พร้อม**ตรวจผลจริง**
+
+    จุดอ่อนของการเคลียร์แบบยิงคีย์ทิ้งคือมันบอด — ถ้าแอป (โดยเฉพาะ SAP ที่มี network
+    roundtrip) ยัง busy หรือ focus ยังมาไม่ถึงช่อง คีย์จะถูกกลืนเงียบๆ แล้วค่าเก่าค้าง
+    ต่อกับค่าใหม่ เลยตรวจสอบด้วย clipboard: หลังเลือกทั้งช่อง (End → Shift+Home)
+    วาง sentinel ลง clipboard แล้วกด Ctrl+C (แบบ virtual-key, layout-proof) —
+    ถ้า clipboard ยังเป็น sentinel = ไม่มีอะไรถูกเลือก = ช่องว่างจริง ถ้ามีข้อความ
+    = ค่ายังค้าง ให้ลบแล้วตรวจซ้ำ สูงสุด 3 รอบ
+
+    ตรวจไม่ได้ (ไม่มี pyperclip / copy พัง) → ถอยไปเคลียร์บอดรอบเดียวแบบเดิม
+    หมายเหตุ: วิธีนี้เขียนทับ clipboard ของผู้ใช้ (method="paste" ก็ทับอยู่แล้ว)"""
+    try:
+        import pyperclip
+    except Exception:
+        pyperclip = None
+
+    for attempt in range(_CLEAR_MAX_ATTEMPTS):
+        pyautogui.press("end")
+        pyautogui.hotkey("shift", "home")
+        time.sleep(0.15)
+
+        remaining = None  # None = ตรวจไม่ได้, "" = ยืนยันว่าว่าง, อื่นๆ = ค่าที่ยังค้าง
+        if pyperclip is not None:
+            try:
+                pyperclip.copy(_CLEAR_SENTINEL)
+                if _ctrl_combo("c"):
+                    time.sleep(0.12)
+                    got = pyperclip.paste()
+                    # Ctrl+C ตอน selection ว่างจะไม่แตะ clipboard → sentinel คงเดิม
+                    remaining = "" if got == _CLEAR_SENTINEL else (got or "").strip()
+            except Exception:
+                remaining = None
+
+        pyautogui.press("delete")
+        time.sleep(0.15)
+
+        if not remaining:  # ว่างแล้ว หรือตรวจไม่ได้ (ทำ best effort เท่าพฤติกรรมเดิม)
+            return
+        _log(f"Clear field: ค่ายังค้าง {len(remaining)} ตัวอักษร — ลองใหม่ "
+             f"(รอบ {attempt + 1}/{_CLEAR_MAX_ATTEMPTS})")
+
+    # ครบทุกรอบยังเห็นค่าค้างตอนตรวจครั้งล่าสุด — ไปต่อได้เพราะรอบสุดท้ายเพิ่งกด Delete
+    # ไปแล้ว และถ้า selection ยังค้างอยู่ การพิมพ์/วางทับจะแทนที่ selection นั้นเอง
+    _log(f"Clear field: ตรวจครบ {_CLEAR_MAX_ATTEMPTS} รอบยังเห็นค่าค้าง — พิมพ์ทับต่อ", "error")
 
 
 @_safe
@@ -106,19 +203,22 @@ def type_text(text: str, interval: float = 0.05, method: str = "paste", clear: b
       - "paste" (default): วางผ่าน clipboard (Ctrl+V) — เร็ว/ชัวร์กับ SAP & เดสก์ท็อปแอป
                            ถ้า clipboard ใช้ไม่ได้ จะ fallback เป็นการจำลองคีย์ให้เอง
       - "type" / "keys":   จำลองการกดคีย์ทีละตัว (เหมือนพิมพ์มือ) — ใช้กับแอป/ฟิลด์ที่บล็อก paste
-    clear=True: เคลียร์ค่าเดิมในช่องก่อน (End → Shift+Home → Delete) กันค่าค้าง/ต่อกัน เช่นช่อง SAP ที่จำค่าเก่า
+    clear=True: เคลียร์ค่าเดิมในช่องก่อน (End → Shift+Home → Delete พร้อมตรวจผล/ลองซ้ำ
+                — ดู _clear_focused_field) กันค่าค้าง/ต่อกัน เช่นช่อง SAP ที่จำค่าเก่า
     """
     if clear:
         # ใช้ named keys (end/home/shift/delete) แทน 'ctrl+a' — ตัวอักษร 'a' ผ่าน VkKeyScan
         # ซึ่งพังเมื่อ keyboard layout เป็นไทย (Kedmanee) ทำให้ select-all เงียบ ไม่ล้างค่าเดิม
-        _log("Clear field (End, Shift+Home, Delete)")
-        pyautogui.press("end")
-        pyautogui.hotkey("shift", "home")
-        time.sleep(0.15)
-        pyautogui.press("delete")
-        time.sleep(0.15)
-    _log(f"Type ({method}): {repr(text)}")
+        _log(f"Clear field (End, Shift+Home, Delete + ตรวจผล) [{_input_context()}]")
+        _clear_focused_field()
+    ctx = _input_context()
+    _log(f"Type ({method}): {repr(text)} [{ctx}]")
     if method in ("type", "keys"):
+        if "lang=EN" not in ctx and text.isascii():
+            # การจำลองคีย์ทีละตัวใช้ scan code ตาม layout — ภาษาไทยจะพิมพ์ข้อความ
+            # อังกฤษเพี้ยน (paste ไม่มีปัญหานี้เพราะผ่าน clipboard ตรงๆ)
+            _log(f"เตือน: หน้าต่างเป้าหมายไม่ได้ใช้ภาษา EN ({ctx}) — "
+                 "method=type อาจพิมพ์เพี้ยน แนะนำเปลี่ยนภาษาหรือใช้ method=paste", "error")
         keyboard.write(text, delay=interval)
         return
     # default = paste: SAP/desktop รับ keystroke ทีละตัวไม่ทัน → ใช้ clipboard ก่อน
@@ -219,3 +319,10 @@ def wait_element(selector: dict, timeout: float = 15):
     from engine import ui_element
     _log(f"Wait element: {selector} (timeout {timeout}s)")
     ui_element.find_element(selector, timeout)
+
+
+@_safe
+def focus_window(title: str, timeout: float = 10):
+    from engine import ui_element
+    _log(f"Focus window: {title!r} (timeout {timeout}s)")
+    ui_element.focus_window(title, timeout)

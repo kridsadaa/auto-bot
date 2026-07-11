@@ -518,6 +518,28 @@ def test_wait_window_disappear_timeout_raises(mock_interrupt):
             }]}, ds)
 
 
+# ─── focus_window ─────────────────────────────────────────────────────────────
+
+def test_focus_window_passes_title_and_timeout(mock_interrupt):
+    runner = make_runner(mock_interrupt)
+    ds = DataSource({})
+    with patch("engine.actions.focus_window") as m:
+        runner.run_loop({"steps": [{
+            "action": "focus_window", "title": ".*SAP.*", "timeout": 8,
+        }]}, ds)
+    m.assert_called_once_with(".*SAP.*", timeout=8)
+
+
+def test_focus_window_defaults_timeout_to_10(mock_interrupt):
+    runner = make_runner(mock_interrupt)
+    ds = DataSource({})
+    with patch("engine.actions.focus_window") as m:
+        runner.run_loop({"steps": [{
+            "action": "focus_window", "title": ".*Notepad.*",
+        }]}, ds)
+    m.assert_called_once_with(".*Notepad.*", timeout=10)
+
+
 # ─── Interactive Live Debugger (step-index control via on_debug) ──────────────
 
 def _debug_runner(mock_interrupt, on_debug):

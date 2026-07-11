@@ -537,6 +537,8 @@ class LoopRunner:
                 )
             elif action == "wait_window":
                 self._do_wait_window(step)
+            elif action == "focus_window":
+                actions.focus_window(step["title"], timeout=step.get("timeout", 10))
             elif action == "stop_if_image":
                 self._do_stop_if_image(step)
             elif action == "skip_row":

@@ -19,7 +19,7 @@ ACTION_TYPES = [
     "wait_image", "wait_text", "repeat_key_until", "stop_if_image",
     "skip_row_if_image", "skip_row", "if_image", "switch_image",
     "write_row", "call_loop",
-    "click_element", "set_element_text", "wait_element", "wait_window",
+    "click_element", "set_element_text", "wait_element", "wait_window", "focus_window",
     "sap_set_field", "sap_get_field", "sap_press",
 ]
 
@@ -134,6 +134,8 @@ def _step_label(step: dict) -> str:
         return f"{action}  →   {who}"
     if action == "wait_window":
         return f"wait_window    →   {step.get('title', '?')}  [{step.get('mode', 'appear')}]"
+    if action == "focus_window":
+        return f"focus_window   →   {step.get('title', '?')}"
     return action
 
 
@@ -527,6 +529,14 @@ class StepDialog(tk.Toplevel):
             tk.Label(self._fields_frame, text="  appear = รอจนหน้าต่างโผล่ / disappear = รอจนหน้าต่างหาย (ปิด)",
                      fg="gray", font=("Segoe UI", 8)).pack(anchor="w")
             self._add_field("timeout", "Timeout (s):", default=str(self._step.get("timeout", 15)))
+
+        elif action == "focus_window":
+            self._add_window_title_row("title", "ชื่อหน้าต่าง (regex):")
+            tk.Label(self._fields_frame,
+                     text="  ดึงหน้าต่างขึ้น foreground + ตั้ง keyboard focus ก่อน step ที่พึ่งคีย์บอร์ดจริง"
+                          " (key/type/hotkey) — กัน input หลงไปหน้าต่างอื่น",
+                     fg="gray", font=("Segoe UI", 8)).pack(anchor="w")
+            self._add_field("timeout", "Timeout (s):", default=str(self._step.get("timeout", 10)))
 
         # ─── SAP Scripting actions ───────────────────────────────────────────
         elif action == "sap_set_field":

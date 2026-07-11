@@ -57,6 +57,23 @@ def find_element(selector: dict, timeout: float = 10):
         raise ElementNotFoundError(selector, str(e)) from e
 
 
+def focus_window(title: str, timeout: float = 10):
+    """ดึงหน้าต่างที่ title ตรง regex `title` ขึ้น foreground + ตั้ง keyboard focus
+    ใช้ก่อน step ที่พึ่งคีย์บอร์ดจริง (key/type/hotkey) กัน input หลงไปหน้าต่างอื่นที่
+    เผลอถูก focus ไว้ก่อนหน้า (เช่น popup ที่เพิ่งปิดไป หรือหน้าต่างที่ SAP scripting
+    ใส่ค่าให้โดยไม่ย้าย focus ของ Windows เลย) — คืน wrapper ถ้าสำเร็จ, raise
+    ElementNotFoundError ถ้าหาไม่เจอภายใน timeout"""
+    try:
+        spec = _desktop().window(title_re=title)
+        spec.wait("exists enabled visible ready", timeout=timeout)
+        wrapper = spec.wrapper_object()
+        wrapper.set_focus()
+        return wrapper
+    except Exception as e:
+        get_logger().error(f"focus_window({title!r}) failed: {e}")
+        raise ElementNotFoundError({"window": title}, str(e)) from e
+
+
 def window_exists(title: str) -> bool:
     """เช็คว่ามีหน้าต่างบนสุดที่ title ตรง regex `title` อยู่บนจอไหม (ไม่ raise ถ้าไม่เจอ) — ใช้กับ wait_window"""
     try:
