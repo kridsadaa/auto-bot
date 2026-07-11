@@ -518,9 +518,9 @@ class StepDialog(tk.Toplevel):
             self._add_element_fields()
 
         elif action == "wait_window":
-            self._add_field("title", "ชื่อหน้าต่าง (regex):", default=self._step.get("title", ""))
+            self._add_window_title_row("title", "ชื่อหน้าต่าง (regex):")
             tk.Label(self._fields_frame,
-                     text="  เทียบกับ title ของหน้าต่างด้วย regex เช่น .*Notepad.*  หรือชื่อเป๊ะๆ ก็ได้",
+                     text="  เทียบกับ title ของหน้าต่างด้วย regex เช่น .*Notepad.*  หรือกด '🔍 จิ้ม window'",
                      fg="gray", font=("Segoe UI", 8)).pack(anchor="w")
             self._add_dropdown("mode", "รอจน:", WAIT_MODE_OPTIONS,
                                default=self._step.get("mode", "appear"))
@@ -629,6 +629,43 @@ class StepDialog(tk.Toplevel):
             for key in ("window", "auto_id", "name", "control_type", "class_name"):
                 if key in self._fields and props.get(key):
                     self._fields[key].set(str(props[key]))
+            self._deiconify_focus()
+
+        self._countdown_then(3, do)
+
+    def _add_window_title_row(self, key: str, label: str):
+        """ช่องกรอกชื่อหน้าต่าง + ปุ่ม 'จิ้ม window' (ใช้ element_from_point เอาแค่ title
+        ของหน้าต่างบนสุด — ไม่ต้องคลิก แค่เอาเมาส์ไปชี้เหมือน '🔍 จิ้ม element')"""
+        row = tk.Frame(self._fields_frame)
+        row.pack(fill="x", pady=2)
+        tk.Label(row, text=label, width=18, anchor="w").pack(side="left")
+        var = tk.StringVar(value=self._step.get(key, ""))
+        tk.Entry(row, textvariable=var, width=28).pack(side="left", padx=4)
+        btn_pick_window = tk.Button(row, text="🔍 จิ้ม window", bg="#dcdcaa",
+                  command=lambda: self._pick_window_title(var))
+        btn_pick_window.pack(side="left", padx=2)
+        add_tooltip(btn_pick_window, TT_STEP["pick_window"])
+        self._fields[key] = var
+
+    def _pick_window_title(self, var: tk.StringVar):
+        """นับถอยหลัง 3 วิ → เอาเมาส์ไปชี้หน้าต่างเป้าหมาย (ไม่ต้องคลิก) → ใส่ title ลงช่อง"""
+        self.withdraw()
+
+        def do():
+            try:
+                import win32api
+                from engine import ui_element
+                x, y = win32api.GetCursorPos()
+                props = ui_element.element_from_point(x, y)
+            except Exception as e:
+                self._deiconify_focus()
+                messagebox.showwarning("Window Picker", f"อ่านหน้าต่างไม่ได้: {e}", parent=self)
+                return
+            title = props.get("window")
+            if title:
+                var.set(str(title))
+            else:
+                messagebox.showwarning("Window Picker", "ไม่พบชื่อหน้าต่างใต้เมาส์", parent=self)
             self._deiconify_focus()
 
         self._countdown_then(3, do)
