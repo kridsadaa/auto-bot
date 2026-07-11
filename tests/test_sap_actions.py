@@ -27,14 +27,14 @@ def test_pick_field_id_returns_none_when_scripting_not_available(monkeypatch):
     assert pick_field_id(timeout=1) is None
 
 
-def test_pick_field_id_ignores_field_focused_before_start(monkeypatch):
-    # focus ไม่เปลี่ยนเลยตลอด timeout (ผู้ใช้ไม่ได้คลิกอะไรใหม่) → ต้องคืน None
-    # ไม่ใช่ field เดิมที่ focus ค้างอยู่ก่อนเปิดตัวจิ้ม (bug เดิม: คืน field เดิมทันที)
+def test_pick_field_id_falls_back_to_baseline_field_on_timeout(monkeypatch):
+    # focus ไม่เปลี่ยนเลยตลอด timeout (เช่น ผู้ใช้จิ้ม field เดิมซ้ำ) → ยังคืน field
+    # ที่ focus อยู่ตอน timeout แทนที่จะคืน None (ไม่งั้นจิ้ม field เดิมซ้ำจะ fail เสมอ)
     fake_sess = _FakeSession(_FakeElement("wnd[0]/usr/ctxtMATNR"))
     monkeypatch.setattr("engine.sap_actions._get_session", lambda *a, **kw: fake_sess)
 
     result = pick_field_id(timeout=0.3)
-    assert result is None
+    assert result == "wnd[0]/usr/ctxtMATNR"
 
 
 def test_pick_field_id_returns_new_field_after_focus_changes(monkeypatch):

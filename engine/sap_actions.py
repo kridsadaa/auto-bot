@@ -122,7 +122,10 @@ def pick_field_id(timeout: float = 30) -> str | None:
     จับ focus ตอนเริ่ม (baseline) ไว้ก่อน แล้ว poll จนกว่า focus จะเปลี่ยนไปเป็น field
     อื่นจริงๆ (ไม่ใช่แค่เช็คว่ามี focus อยู่ — SAP แทบมี element โฟกัสอยู่ตลอดเวลาอยู่แล้ว
     ถ้าไม่เทียบกับ baseline จะได้ field เดิมที่ค้าง focus อยู่ก่อนเปิดตัวจิ้มเสมอ)
-    คืน None ถ้า timeout หรือ scripting ไม่พร้อม
+    ถ้าครบ timeout แล้วยังไม่เห็น focus เปลี่ยน แต่ตอนนี้มี field focus อยู่ (เช่น ผู้ใช้
+    จิ้ม field เดิมซ้ำ ทำให้ id เท่า baseline) จะคืน field นั้นแทน — ไม่งั้นการจิ้ม field
+    เดิมซ้ำจะ fail ทุกครั้งทั้งที่คลิกแล้วจริง
+    คืน None ถ้า timeout โดยไม่มี focus เลย หรือ scripting ไม่พร้อม
     """
     try:
         sess = _get_session()
@@ -142,4 +145,4 @@ def pick_field_id(timeout: float = 30) -> str | None:
         fid = current_focus_id()
         if fid and fid != baseline_id:
             return fid
-    return None
+    return current_focus_id()
