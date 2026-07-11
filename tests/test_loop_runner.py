@@ -540,6 +540,28 @@ def test_focus_window_defaults_timeout_to_10(mock_interrupt):
     m.assert_called_once_with(".*Notepad.*", timeout=10)
 
 
+# ─── minimize_window ──────────────────────────────────────────────────────────
+
+def test_minimize_window_passes_title_and_timeout(mock_interrupt):
+    runner = make_runner(mock_interrupt)
+    ds = DataSource({})
+    with patch("engine.actions.minimize_window") as m:
+        runner.run_loop({"steps": [{
+            "action": "minimize_window", "title": "SAP Logon", "timeout": 3,
+        }]}, ds)
+    m.assert_called_once_with("SAP Logon", timeout=3)
+
+
+def test_minimize_window_defaults_timeout_to_10(mock_interrupt):
+    runner = make_runner(mock_interrupt)
+    ds = DataSource({})
+    with patch("engine.actions.minimize_window") as m:
+        runner.run_loop({"steps": [{
+            "action": "minimize_window", "title": "SAP Logon",
+        }]}, ds)
+    m.assert_called_once_with("SAP Logon", timeout=10)
+
+
 # ─── Interactive Live Debugger (step-index control via on_debug) ──────────────
 
 def _debug_runner(mock_interrupt, on_debug):

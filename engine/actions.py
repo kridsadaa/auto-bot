@@ -326,3 +326,11 @@ def focus_window(title: str, timeout: float = 10):
     from engine import ui_element
     _log(f"Focus window: {title!r} (timeout {timeout}s)")
     ui_element.focus_window(title, timeout)
+
+
+@_safe
+def minimize_window(title: str, timeout: float = 10):
+    from engine import ui_element
+    _log(f"Minimize window: {title!r} (timeout {timeout}s)")
+    n = ui_element.minimize_window(title, timeout)
+    _log(f"Minimized {n} window(s) matching {title!r}")

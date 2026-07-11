@@ -93,16 +93,21 @@ def focus_window(title: str, timeout: float = 10):
     ใช้ find_all_windows แทน desktop.window(title_re=...) ตรงๆ — ถ้า regex ตรงมากกว่า
     1 หน้าต่าง (เช่น "SAP" ตรงทั้ง "SAP Logon 760" ที่เปิดค้างตลอดและหน้าต่าง session
     จริง) desktop.window() จะ raise ambiguity error ทันทีไม่ลองอันไหนเลย (เจอจริงกับ
-    ผู้ใช้) — วนดูทุกหน้าต่างที่ตรงแทน เลือกอันแรกที่ visible+enabled จริง (poll จนกว่า
-    จะเจอหรือหมด timeout เผื่อหน้าต่างยังไม่ทันขึ้น) — คืน wrapper ถ้าสำเร็จ, raise
-    ElementNotFoundError ถ้าไม่มีอันไหนผ่านภายใน timeout"""
+    ผู้ใช้) — วนดูทุกหน้าต่างที่ตรงแทน เลือกอันแรกที่ visible+enabled+ไม่ minimize จริง
+    (poll จนกว่าจะเจอหรือหมด timeout เผื่อหน้าต่างยังไม่ทันขึ้น) — คืน wrapper ถ้าสำเร็จ,
+    raise ElementNotFoundError ถ้าไม่มีอันไหนผ่านภายใน timeout
+
+    หมายเหตุ: is_visible() เช็ค WS_VISIBLE style เท่านั้น หน้าต่างที่ minimize ไปแล้ว
+    (เช่นหลังใช้ minimize_window พับ SAP Logon เก็บ) ก็ยัง is_visible()=True อยู่ดี —
+    ต้องเช็ค is_minimized() เพิ่มด้วย ไม่งั้นการพับ SAP Logon จะไม่ช่วยให้เลือกหน้าต่าง
+    ที่ถูกต้องได้เลยเมื่อ title ยังชนกันอยู่ (เช่น regex "SAP" ที่ตรงทั้งคู่)"""
     deadline = time.time() + timeout
-    last_err = "ไม่พบหน้าต่างที่ visible + enabled ตรงเงื่อนไข"
+    last_err = "ไม่พบหน้าต่างที่ visible + enabled + ไม่ minimize ตรงเงื่อนไข"
     while time.time() < deadline:
         for win in find_all_windows(title):
             try:
                 wrapper = win.wrapper_object()
-                if wrapper.is_visible() and wrapper.is_enabled():
+                if wrapper.is_visible() and wrapper.is_enabled() and not wrapper.is_minimized():
                     wrapper.set_focus()
                     return wrapper
             except Exception as e:
@@ -110,6 +115,36 @@ def focus_window(title: str, timeout: float = 10):
         time.sleep(0.3)
     get_logger().error(f"focus_window({title!r}) failed: {last_err}")
     raise ElementNotFoundError({"window": title}, last_err)
+
+
+def minimize_window(title: str, timeout: float = 10) -> int:
+    """ย่อ (minimize) หน้าต่างทุกอันที่ title ตรง regex `title` ลง taskbar
+
+    ใช้พับ SAP Logon pad ที่เปิดค้างตลอดหลัง login สำเร็จแล้ว เพื่อไม่ให้มันแย่ง
+    foreground/keyboard focus กับ session จริงอีก (โดยเฉพาะตอน popup guard ไปกด OK
+    ให้ popup ที่เป็นลูกของมัน ซึ่งมักดึง SAP Logon ขึ้นมาแนบด้วย) — ต่างจาก
+    focus_window ที่ต้องเลือกให้ถูกตัวเดียว ตัวนี้พับทุกอันที่ตรงได้เลยเพราะ "พับเก็บ"
+    ไม่มีความเสี่ยงเหมือนการเลือกโฟกัสผิดตัว
+
+    poll จนกว่าจะเจออย่างน้อยหนึ่งหน้าต่างหรือหมด timeout (เผื่อเรียกตอนหน้าต่างยัง
+    ไม่ทันขึ้น) คืนจำนวนหน้าต่างที่ย่อสำเร็จจริง (ข้ามอันที่ minimize อยู่แล้ว) —
+    คืน 0 เฉยๆถ้าหา title ไม่เจอเลย ไม่ raise เพราะไม่มีอะไรให้พับก็ไม่ถือเป็น error"""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        wins = find_all_windows(title)
+        if wins:
+            minimized = 0
+            for win in wins:
+                try:
+                    wrapper = win.wrapper_object()
+                    if wrapper.is_visible() and not wrapper.is_minimized():
+                        wrapper.minimize()
+                        minimized += 1
+                except Exception as e:
+                    get_logger().error(f"minimize_window({title!r}) failed on one window: {e}")
+            return minimized
+        time.sleep(0.3)
+    return 0
 
 
 def element_from_point(x: int, y: int) -> dict:
