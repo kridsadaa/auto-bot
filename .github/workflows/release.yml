@@ -84,13 +84,13 @@ jobs:
           retention-days: 1
 
       - name: Sign exe via SignPath
-        # ไม่ระบุ artifact-configuration-slug — ใช้ default configuration ของ project นี้
         uses: signpath/github-action-submit-signing-request@v2
         with:
           api-token: '${{ secrets.SIGNPATH_API_TOKEN }}'
           organization-id: '93765c10-4f03-4ae9-a70f-936ba7b6a2b9'
           project-slug: 'auto-bot'
           signing-policy-slug: 'auto-bot'
+          artifact-configuration-slug: 'initial'
           github-artifact-id: '${{ steps.upload-unsigned.outputs.artifact-id }}'
           wait-for-completion: true
           output-artifact-directory: 'dist-signed'
