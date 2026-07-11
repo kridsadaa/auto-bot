@@ -13,6 +13,7 @@ on:
 
 permissions:
   contents: write   # จำเป็นสำหรับ create release + upload asset
+  actions: read     # จำเป็นสำหรับ SignPath connector อ่าน artifact ผ่าน GITHUB_TOKEN default
 
 jobs:
   # ─── job 1: ทดสอบก่อนเสมอ ─────────────────────────────────────────────────
