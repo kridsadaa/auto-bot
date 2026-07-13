@@ -83,6 +83,12 @@ def _show_image_preview(parent, path: str):
     popup.focus_set()
 
 
+def _short_sap_id(field_id: str) -> str:
+    """ตัด SAP field_id ที่เต็มยาวๆ (เช่น wnd[0]/usr/ctxtMATNR) ให้เหลือแค่ส่วนสุดท้าย
+    หลัง / (เช่น ctxtMATNR) สำหรับโชว์ใน step list — id เต็มดูได้จากใน edit dialog อยู่แล้ว"""
+    return field_id.rsplit("/", 1)[-1] if field_id else field_id
+
+
 def _step_label(step: dict) -> str:
     action = step.get("action", "?")
     if action == "click_image":
@@ -139,6 +145,15 @@ def _step_label(step: dict) -> str:
         return f"focus_window   →   {step.get('title', '?')}"
     if action == "minimize_window":
         return f"minimize_window →  {step.get('title', '?')}"
+    if action == "sap_set_field":
+        return f"sap_set_field  →   {_short_sap_id(step.get('field_id', '?'))}  =  {step.get('text', '')}"
+    if action == "sap_get_field":
+        return (f"sap_get_field  →   {_short_sap_id(step.get('field_id', '?'))}  →  "
+                f"{{{step.get('variable', 'SAP_VALUE')}}}")
+    if action == "sap_press":
+        target = step.get("field_id")
+        target = _short_sap_id(target) if target else (f"vkey={step['vkey']}" if step.get("vkey") else "?")
+        return f"sap_press      →   {target}"
     return action
 
 

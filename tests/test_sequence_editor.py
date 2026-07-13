@@ -16,6 +16,31 @@ def test_step_label():
     assert "if_image" in _step_label({"action": "if_image", "target": "elements/chk.png", "then": [1], "else": []})
 
 
+def test_step_label_sap_actions():
+    # sap_set_field/sap_get_field/sap_press เดิม fallback ไปคืนแค่ชื่อ action เปล่าๆ
+    # (ไม่มี field_id/text/vkey ให้เห็นใน list ต่างจาก step อื่นที่โชว์ค่าไว้) —
+    # ตัด field_id ให้เหลือส่วนสุดท้ายหลัง / เท่านั้น (ตัวเต็มยาวเกินไปสำหรับ list)
+    label = _step_label({
+        "action": "sap_set_field", "field_id": "wnd[0]/usr/ctxtMATNR", "text": "{csv.MATERIAL}",
+    })
+    assert "ctxtMATNR" in label
+    assert "wnd[0]/usr/ctxtMATNR" not in label
+    assert "{csv.MATERIAL}" in label
+
+    label = _step_label({
+        "action": "sap_get_field", "field_id": "wnd[0]/sbar", "variable": "ORDER_NO",
+    })
+    assert "sbar" in label
+    assert "ORDER_NO" in label
+
+    label = _step_label({"action": "sap_press", "field_id": "wnd[0]/tbar[0]/btn[0]"})
+    assert "btn[0]" in label
+    assert "wnd[0]/tbar[0]/btn[0]" not in label
+
+    label = _step_label({"action": "sap_press", "vkey": "enter"})
+    assert "enter" in label
+
+
 def test_step_dialog_preserves_nested_fields(tk_root):
     original_step = {
         "action": "if_image",
