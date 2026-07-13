@@ -562,6 +562,29 @@ def test_minimize_window_defaults_timeout_to_10(mock_interrupt):
     m.assert_called_once_with("SAP Logon", timeout=10)
 
 
+# ─── launch_program ───────────────────────────────────────────────────────────
+
+def test_launch_program_passes_path_and_args(mock_interrupt):
+    runner = make_runner(mock_interrupt)
+    ds = DataSource({})
+    with patch("engine.actions.launch_program") as m:
+        runner.run_loop({"steps": [{
+            "action": "launch_program", "path": r"C:\Users\me\Desktop\SAP Logon.lnk",
+            "args": "--quiet",
+        }]}, ds)
+    m.assert_called_once_with(r"C:\Users\me\Desktop\SAP Logon.lnk", args="--quiet")
+
+
+def test_launch_program_defaults_args_to_empty(mock_interrupt):
+    runner = make_runner(mock_interrupt)
+    ds = DataSource({})
+    with patch("engine.actions.launch_program") as m:
+        runner.run_loop({"steps": [{
+            "action": "launch_program", "path": "app.exe",
+        }]}, ds)
+    m.assert_called_once_with("app.exe", args="")
+
+
 # ─── Interactive Live Debugger (step-index control via on_debug) ──────────────
 
 def _debug_runner(mock_interrupt, on_debug):

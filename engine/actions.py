@@ -1,3 +1,5 @@
+import shlex
+import subprocess
 import time
 import pyautogui
 import keyboard
@@ -334,3 +336,24 @@ def minimize_window(title: str, timeout: float = 10):
     _log(f"Minimize window: {title!r} (timeout {timeout}s)")
     n = ui_element.minimize_window(title, timeout)
     _log(f"Minimized {n} window(s) matching {title!r}")
+
+
+def _split_program_args(args: str) -> list[str]:
+    """แยก args string เป็น list คำ — ใช้ shlex.split(posix=False) กันไม่ให้ backslash
+    ใน path/args ถูกตีความเป็น escape character แบบ posix shell (Windows path ใช้ \\
+    เป็นตัวคั่นโฟลเดอร์ ไม่ใช่ escape) แต่ posix=False ไม่ strip เครื่องหมายคำพูดออกให้
+    เอง (ต่างจาก posix=True) เลยต้องลอกเครื่องหมายคำพูดคู่ที่หุ้มทั้ง token ออกเอง
+    ท้ายสุด — ไม่งั้นโปรแกรมปลายทางจะได้ตัวอักษร " ติดมาด้วยทั้งที่ตั้งใจแค่กันเว้นวรรค"""
+    tokens = shlex.split(args, posix=False)
+    return [t[1:-1] if len(t) >= 2 and t[0] == t[-1] and t[0] in ('"', "'") else t
+            for t in tokens]
+
+
+@_safe
+def launch_program(path: str, args: str = ""):
+    """เปิดโปรแกรม/shortcut ตาม path เต็ม (เช่น shortcut SAP Logon บน Desktop) —
+    ไม่รอให้โปรแกรมเปิดเสร็จ (ใช้ wait_window/wait_image ต่อท้ายถ้าต้องรอ)
+    args: อาร์กิวเมนต์เพิ่มเติมต่อท้าย path เป็น string เดียว (เว้นวรรคคั่น)"""
+    _log(f"Launch program: {path} {args}".rstrip())
+    cmd = [path] + (_split_program_args(args) if args else [])
+    subprocess.Popen(cmd)

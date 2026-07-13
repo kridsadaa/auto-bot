@@ -20,7 +20,7 @@ ACTION_TYPES = [
     "skip_row_if_image", "skip_row", "if_image", "switch_image",
     "write_row", "call_loop",
     "click_element", "set_element_text", "wait_element", "wait_window",
-    "focus_window", "minimize_window",
+    "focus_window", "minimize_window", "launch_program",
     "sap_set_field", "sap_get_field", "sap_press",
 ]
 
@@ -145,6 +145,11 @@ def _step_label(step: dict) -> str:
         return f"focus_window   →   {step.get('title', '?')}"
     if action == "minimize_window":
         return f"minimize_window →  {step.get('title', '?')}"
+    if action == "launch_program":
+        label = f"launch_program →   {os.path.basename(step.get('path', '?'))}"
+        if step.get("args"):
+            label += f"  {step['args']}"
+        return label
     if action == "sap_set_field":
         return f"sap_set_field  →   {_short_sap_id(step.get('field_id', '?'))}  =  {step.get('text', '')}"
     if action == "sap_get_field":
@@ -564,6 +569,14 @@ class StepDialog(tk.Toplevel):
                      fg="gray", font=("Segoe UI", 8)).pack(anchor="w")
             self._add_field("timeout", "Timeout (s):", default=str(self._step.get("timeout", 10)))
 
+        elif action == "launch_program":
+            self._add_program_path_row("path", "โปรแกรม/Shortcut:")
+            tk.Label(self._fields_frame,
+                     text="  กด Browse เลือกไฟล์ .exe/.lnk/.bat ที่ต้องการเปิด (เช่น shortcut SAP Logon บน Desktop)"
+                          " — ไม่รอให้เปิดเสร็จ ต่อด้วย wait_window/wait_image ถ้าต้องรอ",
+                     fg="gray", font=("Segoe UI", 8)).pack(anchor="w")
+            self._add_field("args", "Arguments (ออปชัน):", default=self._step.get("args", ""))
+
         # ─── SAP Scripting actions ───────────────────────────────────────────
         elif action == "sap_set_field":
             self._add_field("text", "Text / Variable:", default=self._step.get("text", ""))
@@ -755,6 +768,30 @@ class StepDialog(tk.Toplevel):
             self._deiconify_focus()
 
         self._countdown_then(3, do)
+
+    def _add_program_path_row(self, key: str, label: str):
+        """ช่องกรอก path โปรแกรม + ปุ่ม Browse — เก็บ absolute path เต็ม (ไม่ทำ
+        os.path.relpath แบบช่องรูป/CSV อื่นๆ เพราะโปรแกรมที่จะเปิดมักอยู่นอกโฟลเดอร์
+        auto-bot เสมอ เช่น Desktop หรือ Program Files)"""
+        row = tk.Frame(self._fields_frame)
+        row.pack(fill="x", pady=2)
+        tk.Label(row, text=label, width=18, anchor="w").pack(side="left")
+        var = tk.StringVar(value=self._step.get(key, ""))
+        tk.Entry(row, textvariable=var, width=40).pack(side="left", padx=4)
+        btn_browse_program = tk.Button(row, text="Browse", command=lambda: self._browse_program(var))
+        btn_browse_program.pack(side="left", padx=2)
+        add_tooltip(btn_browse_program, TT_STEP["browse_program"])
+        self._fields[key] = var
+
+    def _browse_program(self, var: tk.StringVar):
+        desktop = os.path.join(os.path.expanduser("~"), "Desktop")
+        initial = desktop if os.path.isdir(desktop) else os.path.expanduser("~")
+        path = filedialog.askopenfilename(
+            title="เลือกโปรแกรมหรือ shortcut", initialdir=initial,
+            filetypes=[("Programs", "*.exe;*.lnk;*.bat;*.cmd"), ("All", "*.*")],
+        )
+        if path:
+            var.set(path)
 
     def _countdown_then(self, secs: int, fn):
         tip = tk.Toplevel(self.master)

@@ -41,6 +41,18 @@ def test_step_label_sap_actions():
     assert "enter" in label
 
 
+def test_step_label_launch_program():
+    label = _step_label({
+        "action": "launch_program", "path": r"C:\Users\me\Desktop\SAP Logon.lnk",
+    })
+    assert "SAP Logon.lnk" in label
+    assert r"C:\Users\me\Desktop" not in label  # basename เท่านั้น เต็มยาวเกินไปสำหรับ list
+
+    label = _step_label({"action": "launch_program", "path": "app.exe", "args": "--quiet"})
+    assert "app.exe" in label
+    assert "--quiet" in label
+
+
 def test_step_dialog_preserves_nested_fields(tk_root):
     original_step = {
         "action": "if_image",

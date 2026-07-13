@@ -541,6 +541,8 @@ class LoopRunner:
                 actions.focus_window(step["title"], timeout=step.get("timeout", 10))
             elif action == "minimize_window":
                 actions.minimize_window(step["title"], timeout=step.get("timeout", 10))
+            elif action == "launch_program":
+                actions.launch_program(step["path"], args=step.get("args", ""))
             elif action == "stop_if_image":
                 self._do_stop_if_image(step)
             elif action == "skip_row":

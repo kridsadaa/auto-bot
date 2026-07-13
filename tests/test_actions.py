@@ -123,3 +123,28 @@ def test_paste_falls_back_to_pyautogui_hotkey(fake_gui, fake_clipboard, monkeypa
     monkeypatch.setattr("engine.actions._ctrl_combo", lambda letter: False)
     assert actions._paste_via_clipboard("hello") is True
     assert ("hotkey", ("ctrl", "v")) in fake_gui.calls
+
+
+# ─── launch_program ───────────────────────────────────────────────────────────
+
+def test_launch_program_with_no_args(monkeypatch):
+    calls = []
+    monkeypatch.setattr("engine.actions.subprocess.Popen", lambda cmd: calls.append(cmd))
+    actions.launch_program(r"C:\Users\me\Desktop\SAP Logon.lnk")
+    assert calls == [[r"C:\Users\me\Desktop\SAP Logon.lnk"]]
+
+
+def test_launch_program_splits_args_without_mangling_backslashes(monkeypatch):
+    # posix=False กัน shlex ตีความ \ ใน path เป็น escape character (path Windows
+    # ใช้ \ เป็นตัวคั่นโฟลเดอร์ปกติ ไม่ใช่ escape เหมือน posix shell)
+    calls = []
+    monkeypatch.setattr("engine.actions.subprocess.Popen", lambda cmd: calls.append(cmd))
+    actions.launch_program(r"C:\Program Files\App\app.exe", args=r'--config C:\cfg.ini --verbose')
+    assert calls == [[r"C:\Program Files\App\app.exe", "--config", r"C:\cfg.ini", "--verbose"]]
+
+
+def test_launch_program_quoted_arg_with_spaces(monkeypatch):
+    calls = []
+    monkeypatch.setattr("engine.actions.subprocess.Popen", lambda cmd: calls.append(cmd))
+    actions.launch_program("app.exe", args='--name "John Doe"')
+    assert calls == [["app.exe", "--name", "John Doe"]]
