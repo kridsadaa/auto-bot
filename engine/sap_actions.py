@@ -330,31 +330,29 @@ def sap_press(field_id: str = None, vkey: int | str = None,
         raise SapFieldError(f"sap_press: {e}") from e
 
 
-def pick_field_id(timeout: float = 30) -> str | None:
-    """เปิดโหมด "จิ้มเลย" — รอให้ผู้ใช้คลิก field ใหม่ใน SAP แล้วคืน element ID
-    จับ focus ตอนเริ่ม (baseline) ไว้ก่อน แล้ว poll จนกว่า focus จะเปลี่ยนไปเป็น field
-    อื่นจริงๆ (ไม่ใช่แค่เช็คว่ามี focus อยู่ — SAP แทบมี element โฟกัสอยู่ตลอดเวลาอยู่แล้ว
-    ถ้าไม่เทียบกับ baseline จะได้ field เดิมที่ค้าง focus อยู่ก่อนเปิดตัวจิ้มเสมอ)
-    ถ้าครบ timeout แล้วยังไม่เห็น focus เปลี่ยน แต่ตอนนี้มี field focus อยู่ (เช่น ผู้ใช้
-    จิ้ม field เดิมซ้ำ ทำให้ id เท่า baseline) จะคืน field นั้นแทน — ไม่งั้นการจิ้ม field
-    เดิมซ้ำจะ fail ทุกครั้งทั้งที่คลิกแล้วจริง
+class FieldPicker:
+    """จิ้ม SAP field แบบ stepwise — คนเรียก (เช่น GUI ผ่าน Tk after) คุมจังหวะ poll เอง
 
-    ไม่นับ container (GuiUserArea ฯลฯ — ดู _CONTAINER_TYPES) เป็น field ที่ใช้ได้เลย
-    ไม่ว่าจะเจอตอน diff-กับ-baseline หรือตอน fallback ที่ timeout — บั๊กจริงที่เจอ: ถ้า
-    หน้าจอไม่ auto-focus field ไหนตอนเปิด (GuiFocus ค้างที่ container) แล้วผู้ใช้คลิกไม่
-    ทันภายใน timeout เดิมจะคืน id ของ container ไปเงียบๆ (ไม่ error) พอเอาไปตั้งเป็น
-    field_id จริงจะ "sap_set_field สำเร็จ" แบบไม่ error แต่ไม่มีอะไรถูกกรอกลงจอเลย
+    เกิดมาแก้บั๊กจริงฝั่ง GUI: เดิมปุ่มจิ้มนับถอยหลัง 3 วิก่อนแล้วค่อยเริ่มจับ baseline
+    — ผู้ใช้คลิก field ระหว่างนับถอยหลัง (ตามที่ tooltip บอกเอง) ทำให้ field ที่คลิก
+    กลายเป็น baseline แล้วระบบก็รอ "focus เปลี่ยนจาก baseline" ซึ่งไม่มีวันเกิดอีก
+    ต้องรอ timeout เต็มๆ ทั้งที่คลิกถูกแล้ว (หน้า login รอดเพราะ SAP auto-focus ช่อง
+    username เป็น baseline ให้ ส่วนหน้าอย่าง CO01 ไม่ auto-focus เลยพังเต็มๆ)
+    → สร้าง FieldPicker ตอนกดปุ่ม (baseline = ก่อนผู้ใช้คลิกใดๆ) แล้ว poll ทันที
 
-    คืน None ถ้า timeout โดยไม่เจอ field จริงเลย หรือ scripting ไม่พร้อม
-    """
-    try:
-        sess = _get_session()
-    except Exception:
-        return None
+    ไม่นับ container (GuiUserArea ฯลฯ — ดู _CONTAINER_TYPES) เป็น field เด็ดขาด:
+    container รับ .text ได้เงียบๆ โดยไม่มีผลจริง (ดู sap_set_field)
 
-    def real_field_id() -> str | None:
+    raise SapNotAvailableError จาก constructor ถ้า scripting ไม่พร้อม"""
+
+    def __init__(self):
+        self._sess = _get_session()
+        self._baseline = self.current_field()
+
+    def current_field(self) -> str | None:
+        """field จริง (ไม่ใช่ container) ที่ focus อยู่ตอนนี้ — None ถ้าไม่มี/อ่านไม่ได้"""
         try:
-            el = sess.ActiveWindow.GuiFocus
+            el = self._sess.ActiveWindow.GuiFocus
         except Exception:
             return None
         if _is_container_element(el):
@@ -364,14 +362,35 @@ def pick_field_id(timeout: float = 30) -> str | None:
         except Exception:
             return None
 
-    baseline_id = real_field_id()
+    def poll(self) -> str | None:
+        """คืน field id ทันทีที่ focus ย้ายไป field จริงที่ต่างจาก baseline — None ถ้ายัง"""
+        fid = self.current_field()
+        if fid and fid != self._baseline:
+            return fid
+        return None
+
+
+def pick_field_id(timeout: float = 30) -> str | None:
+    """เปิดโหมด "จิ้มเลย" แบบ blocking — รอให้ผู้ใช้คลิก field ใหม่ใน SAP แล้วคืน
+    element ID (ห่อ FieldPicker ด้วย loop ธรรมดา — ฝั่ง GUI อย่าใช้ตัวนี้ เพราะจะ
+    block Tk mainloop ให้ใช้ FieldPicker + after แทน)
+
+    ถ้าครบ timeout แล้วยังไม่เห็น focus เปลี่ยน แต่ตอนนี้มี field จริง focus อยู่ (เช่น
+    ผู้ใช้จิ้ม field เดิมซ้ำ ทำให้ id เท่า baseline) จะคืน field นั้นแทน — ไม่งั้นการจิ้ม
+    field เดิมซ้ำจะ fail ทุกครั้งทั้งที่คลิกแล้วจริง
+    คืน None ถ้า timeout โดยไม่เจอ field จริงเลย หรือ scripting ไม่พร้อม"""
+    try:
+        picker = FieldPicker()
+    except Exception:
+        return None
+
     deadline = time.time() + timeout
     while time.time() < deadline:
         time.sleep(0.2)
-        fid = real_field_id()
-        if fid and fid != baseline_id:
+        fid = picker.poll()
+        if fid:
             return fid
-    fallback = real_field_id()
+    fallback = picker.current_field()
     if fallback:
         return fallback
     get_logger().warning(

@@ -615,24 +615,74 @@ class StepDialog(tk.Toplevel):
         self._fields[key] = var
 
     def _pick_sap_field(self, var: tk.StringVar):
-        """นับถอยหลัง 3 วิ → รอผู้ใช้คลิก field ใน SAP → ใส่ ID ลงช่อง"""
+        """จิ้ม SAP field แบบ "เห็นก่อนยืนยัน": ป้ายลอยโชว์ field ที่ focus อยู่ใน SAP
+        สดๆ (อัปเดตตามทุกคลิก ผ่าน Tk after ไม่ block GUI) ผู้ใช้กด "ใช้ field นี้"
+        เองเมื่อได้ตัวที่ต้องการ → ตัดการเดาจังหวะทิ้งทั้งหมด
+
+        ทำไมไม่จับอัตโนมัติ: การเดาว่า "คลิกไหนคือคลิกที่ตั้งใจ" พังมาแล้วสองแบบ —
+        แบบนับถอยหลังทำให้คลิกช่วงนับถอยหลังกลายเป็น baseline (CO01 จับไม่ได้เลย)
+        ส่วนแบบจับ-ทันที-ที่เปลี่ยน baseline ก็อ่านพลาดชั่วขณะตอนสลับหน้าต่างได้
+        ทำให้คว้า field ที่ focus ค้างอยู่มาทันทีโดยผู้ใช้ยังไม่ทันคลิก (อันตรายบนหน้า
+        ที่ auto-focus ช่องแรกเอง เช่นหน้า login จะได้ช่องผิดแบบเงียบๆ)
+        หมายเหตุ: การกดปุ่มบนป้ายลอยไม่กระทบ GuiFocus ของ SAP (เป็นคนละแอป)"""
+        from engine.sap_actions import FieldPicker
+        try:
+            picker = FieldPicker()
+        except Exception as e:
+            messagebox.showerror("SAP Picker", f"ไม่พร้อม: {e}", parent=self)
+            return
+
+        # StepDialog เป็น modal (grab_set) — ถ้าไม่ปล่อย grab ก่อน event เมาส์ทั้งแอป
+        # จะถูกส่งไปหา dialog ที่ถูกซ่อนอยู่ ทำให้ปุ่มบนป้ายลอยกดไม่เข้าเลย
+        self.grab_release()
         self.withdraw()
+        tip = tk.Toplevel(self.master)
+        tip.attributes("-topmost", True)
+        tip.overrideredirect(True)
+        tip.configure(bg="#222")
+        tk.Label(tip, text="คลิก field ใน SAP แล้วกด 'ใช้ field นี้'", bg="#222",
+                 fg="white", font=("Segoe UI", 12, "bold"), padx=16).pack(pady=(8, 2))
+        picked_var = tk.StringVar(value="(ยังไม่มี field ถูกเลือก)")
+        tk.Label(tip, textvariable=picked_var, bg="#222", fg="#4ec9b0",
+                 font=("Consolas", 9), padx=16).pack()
+        btn_row = tk.Frame(tip, bg="#222")
+        btn_row.pack(pady=8)
+        state = {"alive": True, "fid": None}
 
-        def do():
-            from engine.sap_actions import pick_field_id, SapNotAvailableError
-            try:
-                field_id = pick_field_id(timeout=20)
-                if field_id:
-                    var.set(field_id)
-                else:
-                    messagebox.showwarning("SAP Picker", "ไม่ได้รับ field ID — คลิก field ใน SAP ระหว่างนับถอยหลัง", parent=self)
-            except SapNotAvailableError as e:
-                messagebox.showerror("SAP Picker", f"ไม่พร้อม: {e}", parent=self)
-            except Exception as e:
-                messagebox.showwarning("SAP Picker", f"เกิดข้อผิดพลาด: {e}", parent=self)
+        def finish(field_id: str | None):
+            state["alive"] = False
+            tip.destroy()
+            if field_id:
+                var.set(field_id)
             self._deiconify_focus()
+            # คืน modal grab (ปล่อยไว้ตอนเริ่มจิ้ม) — หน่วงให้หน้าต่างกลับมา viewable
+            # ก่อน ไม่งั้น grab_set ตอนเพิ่ง deiconify จะ TclError ได้
+            self.after(100, lambda: self.grab_set() if self.winfo_exists() else None)
 
-        self._countdown_then(3, do)
+        # ยืนยันด้วยค่าที่โชว์บนป้ายอยู่ (ไม่อ่านใหม่ตอนกด — กัน focus เปลี่ยนแวบเดียว
+        # ระหว่างตาเห็นกับนิ้วคลิกแล้วได้คนละ field กับที่เห็น)
+        btn_use = tk.Button(btn_row, text="✔ ใช้ field นี้", bg="#4ec9b0", width=14,
+                            state="disabled",
+                            command=lambda: finish(state["fid"]))
+        btn_use.pack(side="left", padx=6)
+        tk.Button(btn_row, text="ยกเลิก", width=10,
+                  command=lambda: finish(None)).pack(side="left", padx=6)
+        tip.geometry(f"+{tip.winfo_screenwidth() // 2 - 170}+40")
+
+        def watch():
+            if not state["alive"]:
+                return
+            try:
+                fid = picker.current_field()
+            except Exception:
+                fid = None
+            if fid and fid != state["fid"]:
+                state["fid"] = fid
+                picked_var.set(fid)
+                btn_use.configure(state="normal")
+            tip.after(150, watch)
+
+        tip.after(150, watch)
 
     def _inspect_element(self):
         self.withdraw()

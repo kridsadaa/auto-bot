@@ -5,8 +5,8 @@ import pytest
 
 import engine.sap_actions as sap_actions
 from engine.sap_actions import (
-    SapFieldError, SapNotAvailableError, _click_scripting_popup_ok, _get_session,
-    pick_field_id, sap_set_field,
+    FieldPicker, SapFieldError, SapNotAvailableError, _click_scripting_popup_ok,
+    _get_session, pick_field_id, sap_set_field,
 )
 
 
@@ -119,6 +119,58 @@ def test_pick_field_id_ignores_container_baseline_and_returns_real_field(monkeyp
 
     result = pick_field_id(timeout=2)
     assert result == "wnd[0]/usr/ctxtCAUFVD-MATNR"
+
+
+# ─── FieldPicker (ตัวที่ GUI ใช้จริงผ่าน Tk after) ────────────────────────────
+
+def test_field_picker_detects_click_that_happened_before_first_poll(monkeypatch):
+    # บั๊กจริงที่เจอ (CO01): เดิม GUI นับถอยหลังก่อนเริ่มจับ ทำให้คลิกช่วงนับถอยหลัง
+    # กลายเป็น baseline — FieldPicker ต้องเก็บ baseline ตั้งแต่สร้าง (ตอนกดปุ่ม)
+    # แล้วคลิกที่เกิดหลังจากนั้นต้องถูกจับได้ตั้งแต่ poll แรก
+    element = _FakeElement("wnd[0]/usr", type_="GuiUserArea")  # ยังไม่มี field focus
+    fake_sess = _FakeSession(element)
+    monkeypatch.setattr("engine.sap_actions._get_session", lambda *a, **kw: fake_sess)
+
+    picker = FieldPicker()  # baseline = None (container)
+    # ผู้ใช้คลิกช่อง Material ทันทีหลังกดปุ่ม (ก่อน poll แรกด้วยซ้ำ)
+    element.Id = "wnd[0]/usr/ctxtCAUFVD-MATNR"
+    element.Type = "GuiCTextField"
+
+    assert picker.poll() == "wnd[0]/usr/ctxtCAUFVD-MATNR"
+
+
+def test_field_picker_never_returns_container(monkeypatch):
+    element = _FakeElement("wnd[0]/usr", type_="GuiUserArea")
+    fake_sess = _FakeSession(element)
+    monkeypatch.setattr("engine.sap_actions._get_session", lambda *a, **kw: fake_sess)
+
+    picker = FieldPicker()
+    assert picker.poll() is None
+    assert picker.current_field() is None
+
+
+def test_field_picker_ignores_baseline_field_until_focus_moves(monkeypatch):
+    # หน้า login: username ถูก auto-focus เป็น baseline — poll ต้องไม่คืน username
+    # จนกว่า focus จะย้ายไป field อื่นจริงๆ (current_field ใช้เป็น fallback ตอน timeout)
+    element = _FakeElement("wnd[0]/usr/txtRSYST-BNAME")
+    fake_sess = _FakeSession(element)
+    monkeypatch.setattr("engine.sap_actions._get_session", lambda *a, **kw: fake_sess)
+
+    picker = FieldPicker()
+    assert picker.poll() is None  # ยัง focus ที่ baseline เดิม
+    assert picker.current_field() == "wnd[0]/usr/txtRSYST-BNAME"
+
+    element.Id = "wnd[0]/usr/pwdRSYST-BCODE"  # ผู้ใช้คลิกช่อง password
+    assert picker.poll() == "wnd[0]/usr/pwdRSYST-BCODE"
+
+
+def test_field_picker_raises_when_scripting_unavailable(monkeypatch):
+    def raise_not_available(*a, **kw):
+        raise SapNotAvailableError("ไม่พบ SAP GUI")
+
+    monkeypatch.setattr("engine.sap_actions._get_session", raise_not_available)
+    with pytest.raises(SapNotAvailableError):
+        FieldPicker()
 
 
 # ─── sap_set_field ────────────────────────────────────────────────────────────
