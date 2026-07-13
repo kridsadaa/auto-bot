@@ -31,6 +31,24 @@ class SapFieldError(Exception):
     pass
 
 
+# GuiComponent.Type ของ "container" ที่ไม่ใช่ field กรอกได้จริง — เจอ id ประเภทนี้
+# มักแปลว่าจิ้ม/พิมพ์ field_id ตื้นเกินไป (หยุดที่ container แทนช่อง input ข้างใน)
+# ปัญหาจริงที่เจอ: GuiUserArea รับ .text = ... ได้เงียบๆไม่ throw แต่ไม่มีที่ให้ค่าไปโผล่
+# เลย "สำเร็จ" แบบไม่ error ทั้งที่ไม่ได้กรอกอะไรลงจอจริง (ดู sap_set_field/pick_field_id)
+_CONTAINER_TYPES = {
+    "GuiUserArea", "GuiContainerShell", "GuiSimpleContainer", "GuiScrollContainer",
+    "GuiSplitterContainer", "GuiFrameWindow", "GuiMainWindow", "GuiDialogShell",
+    "GuiTableControl", "GuiToolbar", "GuiStatusBar", "GuiMenu", "GuiMenubar",
+}
+
+
+def _is_container_element(el) -> bool:
+    try:
+        return str(el.Type) in _CONTAINER_TYPES
+    except Exception:
+        return False
+
+
 _SCRIPTING_POPUP_OK = {"window": "SAP Logon", "auto_id": "1",
                        "name": "OK", "control_type": "Button"}
 
@@ -261,8 +279,16 @@ def sap_set_field(field_id: str, text: str,
     sess = _get_session(connection, session)
     try:
         el = sess.findById(field_id)
+        if _is_container_element(el):
+            raise SapFieldError(
+                f"sap_set_field '{field_id}': element เป็น container ({el.Type}) ไม่ใช่ field "
+                "กรอกได้จริง — field_id นี้ตื้นเกินไป (มักเกิดจากจิ้ม/พิมพ์ id ไม่ตรงกล่องกรอก) "
+                "ลองจิ้ม SAP field ใหม่ให้ตรงช่อง input ไม่ใช่พื้นที่รอบๆ"
+            )
         el.text = text
         get_logger().info(f"SAP set '{field_id}' = {repr(text)}")
+    except SapFieldError:
+        raise
     except Exception as e:
         raise SapFieldError(f"sap_set_field '{field_id}': {e}") from e
 
@@ -312,24 +338,44 @@ def pick_field_id(timeout: float = 30) -> str | None:
     ถ้าครบ timeout แล้วยังไม่เห็น focus เปลี่ยน แต่ตอนนี้มี field focus อยู่ (เช่น ผู้ใช้
     จิ้ม field เดิมซ้ำ ทำให้ id เท่า baseline) จะคืน field นั้นแทน — ไม่งั้นการจิ้ม field
     เดิมซ้ำจะ fail ทุกครั้งทั้งที่คลิกแล้วจริง
-    คืน None ถ้า timeout โดยไม่มี focus เลย หรือ scripting ไม่พร้อม
+
+    ไม่นับ container (GuiUserArea ฯลฯ — ดู _CONTAINER_TYPES) เป็น field ที่ใช้ได้เลย
+    ไม่ว่าจะเจอตอน diff-กับ-baseline หรือตอน fallback ที่ timeout — บั๊กจริงที่เจอ: ถ้า
+    หน้าจอไม่ auto-focus field ไหนตอนเปิด (GuiFocus ค้างที่ container) แล้วผู้ใช้คลิกไม่
+    ทันภายใน timeout เดิมจะคืน id ของ container ไปเงียบๆ (ไม่ error) พอเอาไปตั้งเป็น
+    field_id จริงจะ "sap_set_field สำเร็จ" แบบไม่ error แต่ไม่มีอะไรถูกกรอกลงจอเลย
+
+    คืน None ถ้า timeout โดยไม่เจอ field จริงเลย หรือ scripting ไม่พร้อม
     """
     try:
         sess = _get_session()
     except Exception:
         return None
 
-    def current_focus_id() -> str | None:
+    def real_field_id() -> str | None:
         try:
-            return str(sess.ActiveWindow.GuiFocus.Id)
+            el = sess.ActiveWindow.GuiFocus
+        except Exception:
+            return None
+        if _is_container_element(el):
+            return None
+        try:
+            return str(el.Id)
         except Exception:
             return None
 
-    baseline_id = current_focus_id()
+    baseline_id = real_field_id()
     deadline = time.time() + timeout
     while time.time() < deadline:
         time.sleep(0.2)
-        fid = current_focus_id()
+        fid = real_field_id()
         if fid and fid != baseline_id:
             return fid
-    return current_focus_id()
+    fallback = real_field_id()
+    if fallback:
+        return fallback
+    get_logger().warning(
+        "pick_field_id: หมดเวลาแต่ยังไม่เจอ field จริง (focus อาจอยู่ที่ container) "
+        "— ลองคลิกให้ตรงกล่องกรอกอีกครั้ง"
+    )
+    return None

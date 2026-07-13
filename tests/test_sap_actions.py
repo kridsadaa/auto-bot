@@ -4,7 +4,10 @@ import time
 import pytest
 
 import engine.sap_actions as sap_actions
-from engine.sap_actions import SapNotAvailableError, _click_scripting_popup_ok, _get_session, pick_field_id
+from engine.sap_actions import (
+    SapFieldError, SapNotAvailableError, _click_scripting_popup_ok, _get_session,
+    pick_field_id, sap_set_field,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -22,8 +25,10 @@ def clear_sap_session_cache():
 
 
 class _FakeElement:
-    def __init__(self, id_):
+    def __init__(self, id_, type_="GuiCTextField", text=""):
         self.Id = id_
+        self.Type = type_
+        self.text = text
 
 
 class _FakeWindow:
@@ -32,8 +37,12 @@ class _FakeWindow:
 
 
 class _FakeSession:
-    def __init__(self, element):
+    def __init__(self, element, findby_map=None):
         self.ActiveWindow = _FakeWindow(element)
+        self._findby_map = findby_map or {}
+
+    def findById(self, field_id):
+        return self._findby_map[field_id]
 
 
 def test_pick_field_id_returns_none_when_scripting_not_available(monkeypatch):
@@ -80,6 +89,60 @@ def test_pick_field_id_survives_focus_read_errors(monkeypatch):
 
     monkeypatch.setattr("engine.sap_actions._get_session", lambda *a, **kw: _BrokenSession())
     assert pick_field_id(timeout=0.3) is None
+
+
+def test_pick_field_id_returns_none_when_stuck_on_container(monkeypatch):
+    # บั๊กจริงที่เจอ: หน้าจอไม่ auto-focus field ไหนตอนเปิด (GuiFocus ค้างที่ container
+    # เช่น GuiUserArea) แล้วผู้ใช้คลิกไม่ทันภายใน timeout — ต้องคืน None ไม่ใช่คืน id
+    # ของ container ไปเงียบๆ (ไม่งั้น sap_set_field เอาไปตั้งค่าแบบไม่ error แต่ไม่มีอะไร
+    # ถูกกรอกลงจอจริง)
+    container = _FakeElement("wnd[0]/usr", type_="GuiUserArea")
+    fake_sess = _FakeSession(container)
+    monkeypatch.setattr("engine.sap_actions._get_session", lambda *a, **kw: fake_sess)
+
+    assert pick_field_id(timeout=0.3) is None
+
+
+def test_pick_field_id_ignores_container_baseline_and_returns_real_field(monkeypatch):
+    # baseline เป็น container (ปกติตอนหน้าจอไม่ auto-focus อะไร) แล้วผู้ใช้คลิก field
+    # จริงภายใน timeout → ต้องคืน field นั้น ไม่ใช่ None
+    element = _FakeElement("wnd[0]/usr", type_="GuiUserArea")
+    fake_sess = _FakeSession(element)
+    monkeypatch.setattr("engine.sap_actions._get_session", lambda *a, **kw: fake_sess)
+
+    def click_real_field_after_delay():
+        time.sleep(0.15)
+        element.Id = "wnd[0]/usr/ctxtCAUFVD-MATNR"
+        element.Type = "GuiCTextField"
+
+    threading.Thread(target=click_real_field_after_delay, daemon=True).start()
+
+    result = pick_field_id(timeout=2)
+    assert result == "wnd[0]/usr/ctxtCAUFVD-MATNR"
+
+
+# ─── sap_set_field ────────────────────────────────────────────────────────────
+
+def test_sap_set_field_sets_text_on_real_field(monkeypatch):
+    field = _FakeElement("wnd[0]/usr/ctxtCAUFVD-MATNR", type_="GuiCTextField")
+    fake_sess = _FakeSession(None, findby_map={field.Id: field})
+    monkeypatch.setattr("engine.sap_actions._get_session", lambda *a, **kw: fake_sess)
+
+    sap_set_field(field.Id, "49000123")
+    assert field.text == "49000123"
+
+
+def test_sap_set_field_rejects_container_element(monkeypatch):
+    # บั๊กจริงที่เจอ: field_id ตื้นเกินไปชี้ไปที่ container (GuiUserArea) แทนช่อง input
+    # จริง — .text = ... ไม่ throw (container รับได้เงียบๆ) แต่ไม่มีอะไรถูกกรอกลงจอเลย
+    # ต้อง raise SapFieldError ทันทีก่อนจะเซ็ตค่า ไม่ปล่อยให้ "สำเร็จ" แบบไม่มีผลจริง
+    container = _FakeElement("wnd[0]/usr", type_="GuiUserArea")
+    fake_sess = _FakeSession(None, findby_map={container.Id: container})
+    monkeypatch.setattr("engine.sap_actions._get_session", lambda *a, **kw: fake_sess)
+
+    with pytest.raises(SapFieldError):
+        sap_set_field(container.Id, "49000123")
+    assert container.text == ""  # ไม่ถูกเซ็ตเลย
 
 
 def test_get_session_retries_when_watcher_clicked_ok(monkeypatch):
