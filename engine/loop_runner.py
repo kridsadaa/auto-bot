@@ -11,6 +11,9 @@ from engine.interrupt_handler import InterruptHandler, BotStoppedError
 from engine.logger import get_logger
 
 
+DEFAULT_MAX_CONSECUTIVE_RECOVERIES = 3
+
+
 class RowError(Exception):
     """แถว CSV ทำงานพลาด (action error/ภาพไม่เจอ) — กู้คืนได้ถ้า on_row_error=skip
     ต่างจาก BotStoppedError ที่ตั้งใจหยุดทั้งงาน (ผู้ใช้/stop_if_image/error_guard)"""
@@ -60,6 +63,17 @@ class LoopRunner:
         recovery_steps = loop_config.get("recovery_steps", []) or []
         error_log_path = loop_config.get("error_log_path", "")
         setup_steps = loop_config.get("setup_steps", []) or []
+        # กัน recover วนพังไม่จบ (เช่น SAP ยังพังต่อทุกครั้งหลัง relaunch) — นับเฉพาะ
+        # แถวที่ต้อง recover ติดกันไปเรื่อยๆ โดยไม่มีแถวไหนผ่านคั่นกลาง ถ้าเกินที่ตั้งไว้
+        # ถือว่า recovery_steps ไม่ได้แก้ปัญหาจริง หยุดทั้งงานแทนที่จะรันทิ้งจนกว่า CSV จะหมด
+        # เช็ค None/"" แยกจาก 0 ตรงๆ (ไม่ใช้ `or`) เพราะ 0 เป็นค่าที่ตั้งใจได้ (หยุดทันที
+        # ตั้งแต่ recover ครั้งแรกที่ไม่ผ่าน) ซึ่ง `0 or DEFAULT` จะกลืนกลายเป็น DEFAULT ผิดเจตนา
+        raw_max_recoveries = loop_config.get("max_consecutive_recoveries")
+        max_consecutive_recoveries = (
+            int(raw_max_recoveries) if raw_max_recoveries not in (None, "")
+            else DEFAULT_MAX_CONSECUTIVE_RECOVERIES
+        )
+        consecutive_recoveries = 0
 
         # ตัวแปรเฉพาะ loop (loop-scoped) — override global เฉพาะตัวที่ "มีค่า"
         # ค่าว่าง (เช่น loop ที่เพิ่ง import มายังไม่กรอก) จะ fall through ไปใช้ค่า global เดิม
@@ -97,9 +111,11 @@ class LoopRunner:
                 get_logger().info(f"--- CSV row {row_num} ---")
                 try:
                     self._execute_steps(steps, ds)
+                    consecutive_recoveries = 0  # แถวนี้ผ่านโดยไม่ต้อง recover → environment ยังโอเค
                 except SkipRowSignal as e:
                     self._on_log(f"⏭️ ข้ามแถว {row_num}: {e}")
                     get_logger().info(f"Row {row_num} skipped: {e}")
+                    consecutive_recoveries = 0  # ตั้งใจ skip เอง ไม่ใช่สัญญาณว่า environment พัง
                     continue
                 except (RowError, ImageNotFoundError) as e:
                     if on_row_error == "skip":
@@ -107,7 +123,11 @@ class LoopRunner:
                         get_logger().error(f"Row {row_num} failed (skipped): {e}")
                         continue
                     if on_row_error == "recover":
-                        self._on_log(f"⚠️ แถว {row_num} ผิดพลาด — กำลังกู้คืน: {e}")
+                        consecutive_recoveries += 1
+                        self._on_log(
+                            f"⚠️ แถว {row_num} ผิดพลาด — กำลังกู้คืน "
+                            f"({consecutive_recoveries}/{max_consecutive_recoveries}): {e}"
+                        )
                         get_logger().error(f"Row {row_num} failed (recover): {e}")
                         if error_log_path:
                             from engine.file_writer import append_error_log
@@ -124,6 +144,12 @@ class LoopRunner:
                             except Exception as re_err:
                                 self._on_log(f"⚠️ Recovery steps พลาดด้วย: {re_err}")
                                 get_logger().error(f"Recovery failed for row {row_num}: {re_err}")
+                        if consecutive_recoveries >= max_consecutive_recoveries:
+                            msg = (f"recover ล้มเหลวติดกัน {consecutive_recoveries} ครั้ง "
+                                   f"(เกิน max_consecutive_recoveries={max_consecutive_recoveries}) — หยุดทั้งงาน")
+                            self._on_log(f"⛔ {msg}")
+                            get_logger().error(msg)
+                            raise BotStoppedError(msg)
                         continue
                     raise  # on_row_error=stop → หยุดทั้งงาน
                 # BotStoppedError (ผู้ใช้/stop_if_image/error_guard) ไม่ถูกจับ → หยุดทั้งงานเสมอ
@@ -541,6 +567,8 @@ class LoopRunner:
                 actions.focus_window(step["title"], timeout=step.get("timeout", 10))
             elif action == "minimize_window":
                 actions.minimize_window(step["title"], timeout=step.get("timeout", 10))
+            elif action == "kill_window":
+                actions.kill_window(step["title"], timeout=step.get("timeout", 10))
             elif action == "launch_program":
                 actions.launch_program(step["path"], args=step.get("args", ""))
             elif action == "stop_if_image":

@@ -147,6 +147,55 @@ def minimize_window(title: str, timeout: float = 10) -> int:
     return 0
 
 
+def kill_window(title: str, timeout: float = 10) -> int:
+    """หา process ที่เป็นเจ้าของหน้าต่างทุกอันที่ title ตรง regex `title` แล้ว
+    force-terminate ทันที (TerminateProcess) — ไม่ยิง WM_CLOSE ให้โปรแกรมปิดตัวเอง
+
+    เหตุผลที่ต้อง force: โปรแกรมหลายตัว (SAP GUI เป็นตัวอย่างเด่น) เด้ง popup ถาม
+    ยืนยันตอนปิดปกติ ("Do you want to end this session?") ซึ่งบล็อก automation
+    ต่อไม่ได้ถ้าเป้าหมายคือ "ปิดแล้วรันต่อ" ตอนเจอ error — TerminateProcess ข้าม
+    ขั้นตอนนั้นไปเลย เหมือนกด End Task ใน Task Manager
+
+    หา PID จาก window handle ผ่าน win32process.GetWindowThreadProcessId (ไม่ใช่
+    เดาจาก process name เพราะชื่อ .exe อาจไม่ตรงกับที่ผู้ใช้คาดไว้ — ใช้ title เดียวกับ
+    step อื่นๆที่มีอยู่แล้ว focus_window/minimize_window ตรงไปตรงมากว่า)
+
+    poll จนกว่าจะเจออย่างน้อยหนึ่งหน้าต่างหรือหมด timeout คืนจำนวน process ที่
+    terminate สำเร็จ (นับ unique PID — หลายหน้าต่างอาจเป็น process เดียวกัน)
+    คืน 0 ถ้าหา title ไม่เจอเลย ไม่ raise เพราะไม่มีอะไรให้ปิดก็ไม่ถือเป็น error"""
+    import win32api
+    import win32con
+    import win32process
+
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        wins = find_all_windows(title)
+        if wins:
+            pids = set()
+            for win in wins:
+                try:
+                    wrapper = win.wrapper_object()
+                    _, pid = win32process.GetWindowThreadProcessId(wrapper.handle)
+                    pids.add(pid)
+                except Exception as e:
+                    get_logger().error(f"kill_window({title!r}) failed reading pid: {e}")
+            killed = 0
+            for pid in pids:
+                handle = None
+                try:
+                    handle = win32api.OpenProcess(win32con.PROCESS_TERMINATE, False, pid)
+                    win32api.TerminateProcess(handle, 0)
+                    killed += 1
+                except Exception as e:
+                    get_logger().error(f"kill_window({title!r}) failed terminating pid={pid}: {e}")
+                finally:
+                    if handle:
+                        win32api.CloseHandle(handle)
+            return killed
+        time.sleep(0.3)
+    return 0
+
+
 def element_from_point(x: int, y: int) -> dict:
     """อ่าน property ของ element ที่อยู่ใต้พิกัด (x,y) → คืน selector dict สำหรับ inspector"""
     try:

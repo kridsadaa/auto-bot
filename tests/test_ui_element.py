@@ -1,15 +1,17 @@
-"""Test engine.ui_element.focus_window/minimize_window — mock find_all_windows/wrapper
-ทั้งหมด (pywinauto Desktop จริงต้องพึ่ง state ของเครื่อง ไม่ hermetic)
+"""Test engine.ui_element.focus_window/minimize_window/kill_window — mock
+find_all_windows/wrapper ทั้งหมด (pywinauto Desktop จริงต้องพึ่ง state ของเครื่อง
+ไม่ hermetic)
 """
 import engine.ui_element as ui_element
-from engine.ui_element import ElementNotFoundError, focus_window, minimize_window
+from engine.ui_element import ElementNotFoundError, focus_window, kill_window, minimize_window
 
 
 class _FakeWrapper:
-    def __init__(self, visible=True, enabled=True, minimized=False):
+    def __init__(self, visible=True, enabled=True, minimized=False, handle=1):
         self._visible = visible
         self._enabled = enabled
         self._minimized = minimized
+        self.handle = handle
         self.focused = False
         self.minimize_calls = 0
 
@@ -176,3 +178,87 @@ def test_minimize_window_retries_until_window_appears(monkeypatch):
 
     assert minimize_window("SAP Logon", timeout=2) == 1
     assert win.minimize_calls == 1
+
+
+# ─── kill_window ──────────────────────────────────────────────────────────────
+
+def _mock_win32_process_kill(monkeypatch, pid_by_handle: dict, terminate_ok=True):
+    """mock win32process.GetWindowThreadProcessId + win32api.OpenProcess/
+    TerminateProcess/CloseHandle — เป็น module จริงตัวเดียวกันไม่ว่า import จาก
+    ที่ไหน เลย patch ที่ตัว module ตรงๆ (kill_window import แบบ local ในฟังก์ชัน)"""
+    calls = {"opened": [], "terminated": [], "closed": []}
+
+    monkeypatch.setattr("win32process.GetWindowThreadProcessId",
+                        lambda h: (1, pid_by_handle[h]))
+    monkeypatch.setattr("win32api.OpenProcess",
+                        lambda access, inherit, pid: calls["opened"].append(pid) or pid)
+    if terminate_ok:
+        monkeypatch.setattr("win32api.TerminateProcess",
+                            lambda h, code: calls["terminated"].append((h, code)))
+    else:
+        def _raise(h, code):
+            raise OSError("access denied")
+        monkeypatch.setattr("win32api.TerminateProcess", _raise)
+    monkeypatch.setattr("win32api.CloseHandle", lambda h: calls["closed"].append(h))
+    return calls
+
+
+def test_kill_window_terminates_owning_process(monkeypatch):
+    win = _FakeWrapper(handle=111)
+    monkeypatch.setattr(ui_element, "find_all_windows", lambda title: [_FakeSpec(win)])
+    calls = _mock_win32_process_kill(monkeypatch, {111: 999})
+
+    n = kill_window("SAP", timeout=1)
+
+    assert n == 1
+    assert calls["opened"] == [999]
+    assert calls["terminated"] == [(999, 0)]
+    assert calls["closed"] == [999]
+
+
+def test_kill_window_dedupes_same_process_across_multiple_windows(monkeypatch):
+    # หลายหน้าต่างเป็น process เดียวกันได้ (เช่น dialog ลูกของโปรแกรมเดียวกัน) —
+    # ต้อง terminate ครั้งเดียวต่อ PID ไม่ใช่ครั้งละหน้าต่าง
+    win_a = _FakeWrapper(handle=111)
+    win_b = _FakeWrapper(handle=222)
+    monkeypatch.setattr(ui_element, "find_all_windows",
+                         lambda title: [_FakeSpec(win_a), _FakeSpec(win_b)])
+    calls = _mock_win32_process_kill(monkeypatch, {111: 999, 222: 999})
+
+    n = kill_window("SAP", timeout=1)
+
+    assert n == 1
+    assert calls["opened"] == [999]
+
+
+def test_kill_window_returns_zero_when_nothing_matches(monkeypatch):
+    monkeypatch.setattr(ui_element, "find_all_windows", lambda title: [])
+    monkeypatch.setattr(ui_element.time, "sleep", lambda s: None)
+    assert kill_window("Nope", timeout=0.3) == 0
+
+
+def test_kill_window_retries_until_window_appears(monkeypatch):
+    win = _FakeWrapper(handle=111)
+    calls_n = {"n": 0}
+
+    def fake_find_all(title):
+        calls_n["n"] += 1
+        return [_FakeSpec(win)] if calls_n["n"] >= 2 else []
+
+    monkeypatch.setattr(ui_element, "find_all_windows", fake_find_all)
+    monkeypatch.setattr(ui_element.time, "sleep", lambda s: None)
+    _mock_win32_process_kill(monkeypatch, {111: 999})
+
+    assert kill_window("SAP", timeout=2) == 1
+
+
+def test_kill_window_does_not_count_failed_terminations(monkeypatch):
+    win = _FakeWrapper(handle=111)
+    monkeypatch.setattr(ui_element, "find_all_windows", lambda title: [_FakeSpec(win)])
+    calls = _mock_win32_process_kill(monkeypatch, {111: 999}, terminate_ok=False)
+
+    n = kill_window("SAP", timeout=1)
+
+    assert n == 0
+    # handle ต้องถูกปิดแม้ terminate พัง (finally) — กัน handle leak
+    assert calls["closed"] == [999]

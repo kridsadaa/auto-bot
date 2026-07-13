@@ -126,25 +126,23 @@ def test_paste_falls_back_to_pyautogui_hotkey(fake_gui, fake_clipboard, monkeypa
 
 
 # ─── launch_program ───────────────────────────────────────────────────────────
+#
+# ใช้ os.startfile (ShellExecute) ไม่ใช่ subprocess.Popen — .lnk shortcut ไม่มี
+# PE header ให้ CreateProcess รันตรงๆ (Popen พังด้วย WinError 193 จริงกับ
+# shortcut SAP Logon) ต้องผ่าน ShellExecute ให้ resolve target ก่อนเหมือนที่
+# Explorer ทำตอนดับเบิลคลิก — args ส่งเป็น string เดียวตรงๆ ไม่ต้องแยกคำเอง
 
 def test_launch_program_with_no_args(monkeypatch):
     calls = []
-    monkeypatch.setattr("engine.actions.subprocess.Popen", lambda cmd: calls.append(cmd))
-    actions.launch_program(r"C:\Users\me\Desktop\SAP Logon.lnk")
-    assert calls == [[r"C:\Users\me\Desktop\SAP Logon.lnk"]]
+    monkeypatch.setattr("engine.actions.os.startfile",
+                        lambda path, arguments="": calls.append((path, arguments)))
+    actions.launch_program(r"C:\Users\Public\Desktop\SAP Logon.lnk")
+    assert calls == [(r"C:\Users\Public\Desktop\SAP Logon.lnk", "")]
 
 
-def test_launch_program_splits_args_without_mangling_backslashes(monkeypatch):
-    # posix=False กัน shlex ตีความ \ ใน path เป็น escape character (path Windows
-    # ใช้ \ เป็นตัวคั่นโฟลเดอร์ปกติ ไม่ใช่ escape เหมือน posix shell)
+def test_launch_program_passes_args_string_unmodified(monkeypatch):
     calls = []
-    monkeypatch.setattr("engine.actions.subprocess.Popen", lambda cmd: calls.append(cmd))
+    monkeypatch.setattr("engine.actions.os.startfile",
+                        lambda path, arguments="": calls.append((path, arguments)))
     actions.launch_program(r"C:\Program Files\App\app.exe", args=r'--config C:\cfg.ini --verbose')
-    assert calls == [[r"C:\Program Files\App\app.exe", "--config", r"C:\cfg.ini", "--verbose"]]
-
-
-def test_launch_program_quoted_arg_with_spaces(monkeypatch):
-    calls = []
-    monkeypatch.setattr("engine.actions.subprocess.Popen", lambda cmd: calls.append(cmd))
-    actions.launch_program("app.exe", args='--name "John Doe"')
-    assert calls == [["app.exe", "--name", "John Doe"]]
+    assert calls == [(r"C:\Program Files\App\app.exe", r'--config C:\cfg.ini --verbose')]

@@ -20,7 +20,7 @@ ACTION_TYPES = [
     "skip_row_if_image", "skip_row", "if_image", "switch_image",
     "write_row", "call_loop",
     "click_element", "set_element_text", "wait_element", "wait_window",
-    "focus_window", "minimize_window", "launch_program",
+    "focus_window", "minimize_window", "kill_window", "launch_program",
     "sap_set_field", "sap_get_field", "sap_press",
 ]
 
@@ -145,6 +145,8 @@ def _step_label(step: dict) -> str:
         return f"focus_window   →   {step.get('title', '?')}"
     if action == "minimize_window":
         return f"minimize_window →  {step.get('title', '?')}"
+    if action == "kill_window":
+        return f"⚠ kill_window  →   {step.get('title', '?')}"
     if action == "launch_program":
         label = f"launch_program →   {os.path.basename(step.get('path', '?'))}"
         if step.get("args"):
@@ -569,6 +571,17 @@ class StepDialog(tk.Toplevel):
                      fg="gray", font=("Segoe UI", 8)).pack(anchor="w")
             self._add_field("timeout", "Timeout (s):", default=str(self._step.get("timeout", 10)))
 
+        elif action == "kill_window":
+            self._add_window_title_row("title", "ชื่อหน้าต่าง (regex):")
+            tk.Label(self._fields_frame,
+                     text="  ⚠ บังคับปิดโปรแกรมที่เป็นเจ้าของหน้าต่างนี้ทันที (เหมือนกด End Task) —"
+                          " ข้าม popup ยืนยันปิดโปรแกรม แต่งานที่ยังไม่บันทึกจะหายหมด",
+                     fg="#e67e22", font=("Segoe UI", 8, "bold")).pack(anchor="w")
+            tk.Label(self._fields_frame,
+                     text="  ใช้ตอน error ต้องการปิด SAP แล้วเริ่ม row ใหม่ — ไม่ใช่ปิดโปรแกรมแบบปกติ",
+                     fg="gray", font=("Segoe UI", 8)).pack(anchor="w")
+            self._add_field("timeout", "Timeout (s):", default=str(self._step.get("timeout", 10)))
+
         elif action == "launch_program":
             self._add_program_path_row("path", "โปรแกรม/Shortcut:")
             tk.Label(self._fields_frame,
@@ -784,10 +797,20 @@ class StepDialog(tk.Toplevel):
         self._fields[key] = var
 
     def _browse_program(self, var: tk.StringVar):
-        desktop = os.path.join(os.path.expanduser("~"), "Desktop")
-        initial = desktop if os.path.isdir(desktop) else os.path.expanduser("~")
+        """เปิด file dialog เลือกโปรแกรม — ลอง Public Desktop ก่อน Desktop ของ user เอง
+        เพราะ installer ของโปรแกรมระดับองค์กร (SAP GUI ก็เป็นแบบนี้) มักวาง shortcut
+        ไว้ที่ C:\\Users\\Public\\Desktop ให้ทุก user ใช้ร่วมกัน ไม่ใช่ Desktop ส่วนตัว —
+        Explorer เอาสองโฟลเดอร์นี้มาโชว์รวมเป็นหน้าเดียวกันทำให้ดูเหมือนอยู่ที่เดียว
+        แต่ file dialog เปิดได้ทีละโฟลเดอร์ ถ้าเปิดผิดโฟลเดอร์จะไม่เห็น shortcut เลย"""
+        candidates = [
+            os.path.join(os.environ.get("PUBLIC", r"C:\Users\Public"), "Desktop"),
+            os.path.join(os.path.expanduser("~"), "Desktop"),
+        ]
+        initial = next((c for c in candidates if os.path.isdir(c)), os.path.expanduser("~"))
         path = filedialog.askopenfilename(
-            title="เลือกโปรแกรมหรือ shortcut", initialdir=initial,
+            title="เลือกโปรแกรมหรือ shortcut — หาไม่เจอในนี้ลองดูใน Desktop ส่วนตัวด้วย"
+                  " (บาง shortcut เช่น SAP Logon อยู่ Public Desktop, บางอันอยู่ Desktop ส่วนตัว)",
+            initialdir=initial,
             filetypes=[("Programs", "*.exe;*.lnk;*.bat;*.cmd"), ("All", "*.*")],
         )
         if path:
@@ -1384,6 +1407,17 @@ class LoopSettingsDialog(tk.Toplevel):
             fg="gray", font=("Segoe UI", 8),
         ).pack(anchor="w", padx=8)
 
+        max_rec_row = tk.Frame(self._recover_frame)
+        max_rec_row.pack(fill="x", padx=8, pady=4)
+        tk.Label(max_rec_row, text="Recover ติดกันได้ไม่เกิน:", width=18, anchor="w").pack(side="left")
+        self._max_recoveries_var = tk.StringVar(
+            value=str(self._cfg.get("max_consecutive_recoveries", 3)))
+        max_rec_entry = tk.Entry(max_rec_row, textvariable=self._max_recoveries_var, width=6)
+        max_rec_entry.pack(side="left", padx=4)
+        add_tooltip(max_rec_entry, TT_LOOP["max_consecutive_recoveries"])
+        tk.Label(max_rec_row, text="ครั้ง — เกินนี้ถือว่า recovery ไม่ได้แก้ปัญหาจริง หยุดทั้งงานเลย",
+                 fg="gray", font=("Segoe UI", 8)).pack(side="left")
+
         NestedStepsEditor(
             self._recover_frame, self._recovery_steps,
             "Recovery Steps — รันเมื่อแถวพลาด (เช่น กด ESC, คลิกกลับหน้าแรก SAP):",
@@ -1447,6 +1481,12 @@ class LoopSettingsDialog(tk.Toplevel):
             self._result["error_log_path"] = el
         else:
             self._result.pop("error_log_path", None)
+
+        max_rec = self._max_recoveries_var.get().strip()
+        try:
+            self._result["max_consecutive_recoveries"] = int(max_rec)
+        except ValueError:
+            self._result.pop("max_consecutive_recoveries", None)
 
         if self._recovery_steps:
             self._result["recovery_steps"] = self._recovery_steps

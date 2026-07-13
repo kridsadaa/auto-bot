@@ -562,6 +562,28 @@ def test_minimize_window_defaults_timeout_to_10(mock_interrupt):
     m.assert_called_once_with("SAP Logon", timeout=10)
 
 
+# ─── kill_window ──────────────────────────────────────────────────────────────
+
+def test_kill_window_passes_title_and_timeout(mock_interrupt):
+    runner = make_runner(mock_interrupt)
+    ds = DataSource({})
+    with patch("engine.actions.kill_window") as m:
+        runner.run_loop({"steps": [{
+            "action": "kill_window", "title": "SAP", "timeout": 5,
+        }]}, ds)
+    m.assert_called_once_with("SAP", timeout=5)
+
+
+def test_kill_window_defaults_timeout_to_10(mock_interrupt):
+    runner = make_runner(mock_interrupt)
+    ds = DataSource({})
+    with patch("engine.actions.kill_window") as m:
+        runner.run_loop({"steps": [{
+            "action": "kill_window", "title": "SAP",
+        }]}, ds)
+    m.assert_called_once_with("SAP", timeout=10)
+
+
 # ─── launch_program ───────────────────────────────────────────────────────────
 
 def test_launch_program_passes_path_and_args(mock_interrupt):
@@ -766,6 +788,107 @@ def test_on_row_error_stop_aborts_whole_batch(mock_interrupt, tmp_csv):
                 "steps": [{"action": "type", "text": "{csv.MATERIAL_CODE}"}],
             }, ds)
     assert calls == ["MAT-001"]  # หยุดที่แถว 2 ไม่ถึงแถว 3
+
+
+def test_recover_below_limit_does_not_stop_bot(mock_interrupt, tmp_csv):
+    from engine.actions import ActionError
+    runner = make_runner(mock_interrupt)
+    ds = DataSource({})
+
+    def type_side(text, **kw):
+        if text == "MAT-002":
+            raise ActionError("พลาด")
+
+    # แค่ 1 แถวจาก 3 พลาด ไม่ถึง max_consecutive_recoveries=2 → รันจนจบ ไม่ raise
+    with patch("engine.actions.type_text", side_effect=type_side):
+        runner.run_loop({
+            "data_source": tmp_csv,
+            "on_row_error": "recover",
+            "max_consecutive_recoveries": 2,
+            "recovery_steps": [],
+            "steps": [{"action": "type", "text": "{csv.MATERIAL_CODE}"}],
+        }, ds)
+
+
+# ─── recover circuit breaker (max_consecutive_recoveries) ─────────────────────
+
+def test_max_consecutive_recoveries_stops_bot_when_exceeded(mock_interrupt, tmp_csv):
+    from engine.actions import ActionError
+    runner = make_runner(mock_interrupt)
+    ds = DataSource({})
+    calls = []
+
+    def type_side(text, **kw):
+        raise ActionError("SAP พัง")  # ทุกแถวพลาดหมด
+
+    with patch("engine.actions.type_text", side_effect=type_side), \
+         patch("engine.actions.press_key", side_effect=lambda k: calls.append(k)):
+        with pytest.raises(BotStoppedError):
+            runner.run_loop({
+                "data_source": tmp_csv,  # 3 แถว
+                "on_row_error": "recover",
+                "max_consecutive_recoveries": 2,
+                "recovery_steps": [{"action": "key", "key": "esc"}],
+                "steps": [{"action": "type", "text": "{csv.MATERIAL_CODE}"}],
+            }, ds)
+    # หยุดทันทีหลัง recover ครั้งที่ 2 (แถว 2) — ไม่ทันถึงแถว 3 เลย
+    assert calls == ["esc", "esc"]
+
+
+def test_max_consecutive_recoveries_defaults_to_3(mock_interrupt, tmp_csv):
+    from engine.actions import ActionError
+    runner = make_runner(mock_interrupt)
+    ds = DataSource({})
+    calls = []
+
+    def type_side(text, **kw):
+        raise ActionError("พลาด")
+
+    with patch("engine.actions.type_text", side_effect=type_side), \
+         patch("engine.actions.press_key", side_effect=lambda k: calls.append(k)):
+        with pytest.raises(BotStoppedError):
+            runner.run_loop({
+                "data_source": tmp_csv,  # 3 แถว ทุกแถวพลาดหมด
+                "on_row_error": "recover",
+                "recovery_steps": [{"action": "key", "key": "esc"}],
+                "steps": [{"action": "type", "text": "{csv.MATERIAL_CODE}"}],
+            }, ds)
+    assert len(calls) == 3  # default = 3 → trip พอดีที่แถวสุดท้าย ไม่ใช่ก่อนหน้า
+
+
+def test_max_consecutive_recoveries_resets_after_a_successful_row(mock_interrupt, tmp_path):
+    import csv as csv_mod
+    from engine.actions import ActionError
+
+    csv_path = tmp_path / "four_rows.csv"
+    with open(csv_path, "w", newline="", encoding="utf-8") as f:
+        w = csv_mod.DictWriter(f, fieldnames=["CODE"])
+        w.writeheader()
+        for code in ["A", "B", "C", "D"]:
+            w.writerow({"CODE": code})
+
+    runner = make_runner(mock_interrupt)
+    ds = DataSource({})
+    processed = []
+    fail_codes = {"A", "C", "D"}  # B ผ่าน → ต้อง reset counter ตรงกลาง
+
+    def type_side(text, **kw):
+        processed.append(text)
+        if text in fail_codes:
+            raise ActionError("พลาด")
+
+    with patch("engine.actions.type_text", side_effect=type_side):
+        with pytest.raises(BotStoppedError):
+            runner.run_loop({
+                "data_source": str(csv_path),
+                "on_row_error": "recover",
+                "max_consecutive_recoveries": 2,
+                "recovery_steps": [],
+                "steps": [{"action": "type", "text": "{csv.CODE}"}],
+            }, ds)
+    # A พลาด(count=1) → B ผ่าน(reset=0) → C พลาด(count=1) → D พลาด(count=2 ถึง limit)
+    # ถ้าไม่ reset ตอน B, C จะเป็น count=2 แล้ว trip ทันที ทำให้ D ไม่ถูกประมวลผลเลย
+    assert processed == ["A", "B", "C", "D"]
 
 
 def test_hotkey_list_keys(mock_interrupt):

@@ -53,6 +53,12 @@ def test_step_label_launch_program():
     assert "--quiet" in label
 
 
+def test_step_label_kill_window():
+    label = _step_label({"action": "kill_window", "title": "SAP"})
+    assert "kill_window" in label
+    assert "SAP" in label
+
+
 def test_step_dialog_preserves_nested_fields(tk_root):
     original_step = {
         "action": "if_image",
