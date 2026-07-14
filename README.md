@@ -355,7 +355,6 @@ python main.py --run-loop <ชื่อ loop> [--config config/bot_config.yaml]
 
 - [ ] **SAP GUI Scripting backend** — เพิ่ม action `sap_set_field` / `sap_press` / `sap_read_status` ที่คุยกับ SAP ผ่าน Scripting API (`win32com` → `GetScriptingEngine`) โดยตรง: แม่นกว่า image matching, ดึงเลข order จาก status bar ได้ตรงๆ ไม่ต้อง OCR. recorder จะจับ element ID ให้อัตโนมัติเพื่อรักษาความง่ายต่อผู้ใช้ (ผู้ใช้ไม่ต้องรู้ ID)
   > ต้องเปิดที่ฝั่ง SAP ก่อน: Options → Accessibility & Scripting → Scripting → **Enable scripting** (Basis อาจปิดไว้ด้วยเหตุผล security)
-- [ ] **AI self-healing** — เมื่อหาภาพไม่เจอ ให้ AI vision หา element ที่ใกล้เคียงแทน (ดู `concepts/design_philosophy_and_ai.md`)
 - [ ] Web automation จริงผ่าน Playwright (ตอนนี้ bundle ไว้แต่ยังไม่ wire กับ engine)
 
 ---

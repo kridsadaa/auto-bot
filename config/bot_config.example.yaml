@@ -3,12 +3,6 @@ variables:
   PASSWORD: ""        # ใส่ SAP password (หรือเว้นว่าง bot จะถามตอน Start)
   COMPANY_CODE: "1000"
 
-# AI Self-Healing: เมื่อ image matching ล้มเหลว Claude Code จะอ่านหน้าจอแล้วหา element ให้
-# วิธีใช้: เปิด Claude Code แล้วรัน `python ai_heal_watch.py` ทิ้งไว้ในอีก terminal
-ai_heal:
-  enabled: false      # ตั้งเป็น true เพื่อเปิดใช้
-  timeout: 60         # วินาทีที่รอ Claude Code ตอบกลับ
-
 states:
   - name: "SAP Login"
     trigger:

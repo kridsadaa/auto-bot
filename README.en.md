@@ -193,7 +193,6 @@ Variable values (USERNAME/PASSWORD) are **never** bundled; CSV/XLSX data files p
 ## Roadmap
 
 - [ ] **SAP GUI Scripting backend** — add `sap_set_field` / `sap_press` / `sap_read_status` actions that talk to SAP through the Scripting API (`win32com` → `GetScriptingEngine`) directly: more reliable than image matching, and able to read order numbers from the status bar without OCR. The recorder will auto-capture element IDs so users still never deal with technical IDs.
-- [ ] **AI self-healing** — when an image isn't found, fall back to AI vision to locate the closest matching element (see `concepts/design_philosophy_and_ai.md`).
 - [ ] Real web automation via Playwright (currently bundled but not yet wired into the engine).
 
 ## Contributing
