@@ -56,6 +56,7 @@ class LoopRunner:
         self._error_guards = loop_config.get("error_guards", []) or []
         # นโยบายเมื่อแถวพลาด: stop / skip / recover
         on_row_error = str(loop_config.get("on_row_error", "stop")).lower()
+        self._on_row_error = on_row_error
         recovery_steps = loop_config.get("recovery_steps", []) or []
         error_log_path = loop_config.get("error_log_path", "")
         setup_steps = loop_config.get("setup_steps", []) or []
@@ -156,6 +157,20 @@ class LoopRunner:
                 # ไม่มี CSV ให้ข้ามไป — จบ loop อย่างสุภาพ
                 self._on_log(f"skip_row ถูกเรียกแต่ไม่มี CSV — จบ loop: {e}")
                 get_logger().info(f"skip_row with no CSV — ending loop: {e}")
+            except (RowError, ImageNotFoundError) as e:
+                if on_row_error == "recover":
+                    self._on_log(f"⚠️ ผิดพลาด — กำลังกู้คืน: {e}")
+                    get_logger().error(f"Failed (recover): {e}")
+                    if recovery_steps:
+                        try:
+                            self._execute_steps(recovery_steps, ds)
+                            self._on_log("↩️ Recovery เสร็จ")
+                        except BotStoppedError:
+                            raise
+                        except Exception as re_err:
+                            self._on_log(f"⚠️ Recovery steps พลาดด้วย: {re_err}")
+                            get_logger().error(f"Recovery failed: {re_err}")
+                raise
 
     def _execute_steps(self, steps: list, data_source: DataSource):
         # step-index control → รองรับ retry/skip/restart/inject กลางคันผ่าน Debug Console
@@ -184,8 +199,8 @@ class LoopRunner:
 
     def _recover(self, steps: list, i: int, error: Exception, data_source: DataSource) -> int:
         """ตัดสินใจกู้คืนเมื่อ step ที่ index i พลาด → คืน index ถัดไป (หรือ raise BotStoppedError)"""
-        # (1) Debug Console แบบ interactive
-        if self._on_debug:
+        # (1) Debug Console แบบ interactive (เฉพาะเมื่อ on_row_error = stop)
+        if self._on_debug and getattr(self, "_on_row_error", "stop") == "stop":
             d = self._on_debug(self._debug_context(steps[i], i, error)) or {}
             dec = d.get("decision", "skip")
             if dec == "stop":

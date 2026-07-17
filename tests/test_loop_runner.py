@@ -1132,3 +1132,80 @@ def test_wait_text_with_string_region(mock_interrupt):
             }],
         }, ds)
         mock_has_text.assert_called_once_with((100, 200, 300, 400), 1)
+
+
+def test_recover_bypasses_debug_console_and_runs_recovery_steps(mock_interrupt, tmp_csv):
+    from engine.actions import ActionError
+    debug_calls = []
+    recovery_calls = []
+
+    def on_debug(ctx):
+        debug_calls.append(ctx)
+        return {"decision": "stop"}
+
+    def press_key(key):
+        recovery_calls.append(key)
+
+    runner = LoopRunner(
+        interrupt=mock_interrupt,
+        on_log=lambda m: None,
+        on_debug=on_debug,
+    )
+    ds = DataSource({})
+
+    # 1. on_row_error = stop: Should trigger on_debug
+    with patch("engine.actions.type_text", side_effect=ActionError("stop test")):
+        with patch("engine.actions.press_key", side_effect=press_key):
+            with pytest.raises(BotStoppedError):
+                runner.run_loop({
+                    "data_source": tmp_csv,
+                    "on_row_error": "stop",
+                    "steps": [{"action": "type", "text": "{csv.MATERIAL_CODE}"}],
+                }, ds)
+    assert len(debug_calls) == 1
+    assert len(recovery_calls) == 0
+
+    # Reset calls
+    debug_calls.clear()
+    recovery_calls.clear()
+
+    # 2. on_row_error = recover: Should bypass on_debug and run recovery_steps
+    with patch("engine.actions.type_text", side_effect=ActionError("recover test")):
+        with patch("engine.actions.press_key", side_effect=press_key):
+            runner.run_loop({
+                "data_source": tmp_csv,
+                "on_row_error": "recover",
+                "max_consecutive_recoveries": 5,
+                "recovery_steps": [{"action": "key", "key": "esc"}],
+                "steps": [{"action": "type", "text": "{csv.MATERIAL_CODE}"}],
+            }, ds)
+
+    assert len(debug_calls) == 0
+    # Runs recovery steps for all 3 rows in tmp_csv before hitting consecutive limit (default is 3, so it runs all 3)
+    assert len(recovery_calls) == 3
+    assert recovery_calls == ["esc", "esc", "esc"]
+
+
+def test_recover_runs_recovery_steps_without_csv(mock_interrupt):
+    from engine.actions import ActionError
+    recovery_calls = []
+
+    def press_key(key):
+        recovery_calls.append(key)
+
+    runner = LoopRunner(
+        interrupt=mock_interrupt,
+        on_log=lambda m: None,
+    )
+    ds = DataSource({})
+
+    with patch("engine.actions.type_text", side_effect=ActionError("no csv test")):
+        with patch("engine.actions.press_key", side_effect=press_key):
+            # run_loop should raise the error, but run the recovery steps first
+            with pytest.raises(RowError):
+                runner.run_loop({
+                    "on_row_error": "recover",
+                    "recovery_steps": [{"action": "key", "key": "esc"}],
+                    "steps": [{"action": "type", "text": "test"}],
+                }, ds)
+    assert recovery_calls == ["esc"]
